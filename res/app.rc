@@ -1,0 +1,5 @@
+#include <windows.h>
+
+#define IDI_SSL_ICON 101
+
+IDI_SSL_ICON ICON "windows.ico"
