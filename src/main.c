@@ -29,7 +29,7 @@ typedef struct { HWND hwnd; BYTE originalAlpha; } WindowAlpha;
 static WindowAlpha trackedWindows[MAX_TRACKED_WINDOWS];
 static int trackedCount = 0;
 
-/* ---------------- 공용 ---------------- */
+
 static boolean IsAlreadyTracked(HWND hwnd) {
     for (int i = 0; i < trackedCount; i++) if (trackedWindows[i].hwnd == hwnd) return true;
     return false;
@@ -42,7 +42,7 @@ static boolean IsAutoTransparentTarget(HWND hwnd) {
     if (!strcmp(className, "ExploreWClass")) return true;
     return false;
 }
-/* ---------------- 투명화 ---------------- */
+
 static BYTE GetWindowAlpha(HWND hwnd) {
     LONG style = GetWindowLong(hwnd, GWL_EXSTYLE);
     if (!(style & WS_EX_LAYERED)) return ALPHA_OPAQUE;
@@ -67,8 +67,6 @@ static void TrackWindow(HWND hwnd) {
     trackedCount++;
 }
 
-/* ---------------- 초기 열거 ---------------- */
-
 static BOOL CALLBACK EnumExplorerWindows(HWND hwnd, LPARAM lParam) {
     if (!IsWindow(hwnd)) return TRUE;
     if (!IsWindowVisible(hwnd)) return TRUE;
@@ -79,18 +77,14 @@ static BOOL CALLBACK EnumExplorerWindows(HWND hwnd, LPARAM lParam) {
     return TRUE;
 }
 
-/* ---------------- WinEvent ---------------- */
-
-
-
 static LRESULT CALLBACK MenuSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR idSubclass, DWORD_PTR refData) {
     switch (msg) {
         case WM_WINDOWPOSCHANGING:
         case WM_STYLECHANGING:
         case WM_SHOWWINDOW:
         case WM_NCPAINT:
-        case WM_PAINT:  // 추가
-        case WM_ERASEBKGND: // 추가
+        case WM_PAINT: 
+        case WM_ERASEBKGND:
             ApplyTransparency(hwnd, ALPHA_MENU);
             break;
 
@@ -118,14 +112,12 @@ static void SubclassMenu(HWND hwnd) {
 static void CALLBACK WinEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwThread, DWORD dwmsEventTime) {
     if (!IsWindow(hwnd)) return;
 
-    // 1️⃣ OBJID_MENU 이벤트 처리: Windows 11 추가 메뉴 포함
     if (idObject == OBJID_MENU) {
         ApplyTransparency(hwnd, ALPHA_MENU);
-        SubclassMenu(hwnd); // 계속 Alpha 유지
+        SubclassMenu(hwnd);
         return;
     }
 
-    // 2️⃣ 기존 Explorer 자동 투명화
     if (idObject != OBJID_WINDOW) return;
     if (!IsWindowVisible(hwnd)) return;
     if (!IsAutoTransparentTarget(hwnd)) return;
@@ -135,7 +127,6 @@ static void CALLBACK WinEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd
 }
 
 
-/* ---------------- 트레이 ---------------- */
 static LRESULT CALLBACK TrayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
     if (msg == WM_TRAY && l == WM_RBUTTONUP) {
         HMENU m = CreatePopupMenu();
@@ -179,7 +170,6 @@ static void* TrayThread(void* arg) {
     return null;
 }
 
-/* ---------------- 키보드 ---------------- */
 static LRESULT CALLBACK KeyboardHook(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HC_ACTION) {
         KBDLLHOOKSTRUCT* key = (KBDLLHOOKSTRUCT*)lParam;
@@ -195,20 +185,15 @@ static LRESULT CALLBACK KeyboardHook(int code, WPARAM wParam, LPARAM lParam) {
                 winUsed = false;
             } else if (up) {
                 winDown = false;
-
-                // 마우스 후킹에서 Win 키를 사용한 경우에만 키 입력 무시
                 if (winUsed) return 1;
             }
 
-            // Win 단독 키는 막지 않고 다음 훅으로 넘김
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
     }
     return CallNextHookEx(NULL, code, wParam, lParam);
 }
 
-
-/* ---------------- 마우스 ---------------- */
 static LRESULT CALLBACK MouseHook(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HC_ACTION) {
         MSLLHOOKSTRUCT* mouse = (MSLLHOOKSTRUCT*)lParam;
@@ -244,7 +229,6 @@ static void* HookThread(void* arg) {
     return null;
 }
 
-/* ---------------- WinEvent + 메시지 루프 ---------------- */
 static void* MsgLoopThread(void* arg) {
     winEventHook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, null, WinEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
 
@@ -258,7 +242,6 @@ static void* MsgLoopThread(void* arg) {
     return null;
 }
 
-/* ---------------- main ---------------- */
 int main(void) {
     EnumWindows(EnumExplorerWindows, 0);
 
