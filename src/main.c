@@ -184,27 +184,29 @@ static LRESULT CALLBACK KeyboardHook(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HC_ACTION) {
         KBDLLHOOKSTRUCT* key = (KBDLLHOOKSTRUCT*)lParam;
         boolean down = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
-        boolean up = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
+        boolean up   = (wParam == WM_KEYUP   || wParam == WM_SYSKEYUP);
 
-        if (key->vkCode == VK_CONTROL) ctrlDown = down ? true : (up ? false : ctrlDown);
+        if (key->vkCode == VK_CONTROL)
+            ctrlDown = down ? true : (up ? false : ctrlDown);
 
         if (key->vkCode == VK_LWIN || key->vkCode == VK_RWIN) {
-            if (down) { winDown = true; winUsed = false; }
-            else if (up) {
+            if (down) {
+                winDown = true;
+                winUsed = false;
+            } else if (up) {
                 winDown = false;
-                if (!winUsed) {
-                    INPUT input = {0};
-                    input.type = INPUT_KEYBOARD; input.ki.wVk = key->vkCode;
-                    SendInput(1, &input, sizeof(input));
-                    input.ki.dwFlags = KEYEVENTF_KEYUP;
-                    SendInput(1, &input, sizeof(input));
-                }
+
+                // 마우스 후킹에서 Win 키를 사용한 경우에만 키 입력 무시
+                if (winUsed) return 1;
             }
-            return 1;
+
+            // Win 단독 키는 막지 않고 다음 훅으로 넘김
+            return CallNextHookEx(NULL, code, wParam, lParam);
         }
     }
-    return CallNextHookEx(null, code, wParam, lParam);
+    return CallNextHookEx(NULL, code, wParam, lParam);
 }
+
 
 /* ---------------- 마우스 ---------------- */
 static LRESULT CALLBACK MouseHook(int code, WPARAM wParam, LPARAM lParam) {
