@@ -264,4 +264,5 @@ int main(void) {
     msgLoopThread.delete(&msgLoopThread);
 
     ExitProcess(0);
+    return 0;
 }
