@@ -23,12 +23,14 @@ static HHOOK mouseHook = null;
 static HWINEVENTHOOK winEventHook = null;
 static HWND trayWindow = null;
 
-typedef struct { HWND hwnd; BYTE originalAlpha; } WindowAlpha;
+typedef struct { 
+    HWND hwnd; 
+    BYTE originalAlpha; 
+} WindowAlpha;
 
 #define MAX_TRACKED_WINDOWS 256
 static WindowAlpha trackedWindows[MAX_TRACKED_WINDOWS];
 static int trackedCount = 0;
-
 
 static boolean IsAlreadyTracked(HWND hwnd) {
     for (int i = 0; i < trackedCount; i++) if (trackedWindows[i].hwnd == hwnd) return true;
@@ -164,7 +166,10 @@ static void* TrayThread(void* arg) {
     Shell_NotifyIconA(NIM_ADD, &nid);
 
     MSG msg;
-    while (GetMessage(&msg, null, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+    while (GetMessage(&msg, null, 0, 0)) {
+        TranslateMessage(&msg); 
+        DispatchMessage(&msg); 
+    }
 
     Shell_NotifyIconA(NIM_DELETE, &nid);
     return null;
