@@ -9,35 +9,31 @@
 ---
 
 <p align="center">
-  <img src="https://img.shields.io/badge/C-100%25-blue?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/GCC-supported-orange?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Platform-Windows-blue?style=for-the-badge&logo=windows" />
-  <img src="https://img.shields.io/badge/Installer-NSIS-purple?style=for-the-badge" />
-</p>
-
-<p align="center">
+  <img src="https://img.shields.io/badge/C-100%25-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/GCC-supported-orange?style=flat-square" />
+  <img src="https://img.shields.io/badge/Platform-Windows-blue?style=flat-square&logo=windows" />
+  <img src="https://img.shields.io/badge/Installer-NSIS-purple?style=flat-square" />
   <a href="https://github.com/sunwookim05/Transparent-window/commits/main">
-    <img src="https://img.shields.io/github/commit-activity/m/sunwookim05/Transparent-window?style=for-the-badge" />
+    <img src="https://img.shields.io/github/commit-activity/m/sunwookim05/Transparent-window?style=flat-square"/>
   </a>
   <a href="https://github.com/sunwookim05/Transparent-window/issues">
-    <img src="https://img.shields.io/github/issues/sunwookim05/Transparent-window?style=for-the-badge" />
+    <img src="https://img.shields.io/github/issues/sunwookim05/Transparent-window?style=flat-square" />
   </a>
   <a href="https://github.com/sunwookim05/Transparent-window/pulls">
-    <img src="https://img.shields.io/github/issues-pr/sunwookim05/Transparent-window?style=for-the-badge" />
+    <img src="https://img.shields.io/github/issues-pr/sunwookim05/Transparent-window?style=flat-square" />
   </a>
 </p>
 
 <p align="center">
   <a href="https://github.com/sunwookim05/Transparent-window/releases">
-    <img src="https://img.shields.io/github/v/release/sunwookim05/Transparent-window?label=release&style=for-the-badge" />
+    <img src="https://img.shields.io/github/v/release/sunwookim05/Transparent-window?label=release&style=flat-square" />
   </a>
   <a href="https://github.com/sunwookim05/Transparent-window/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/sunwookim05/Transparent-window?style=for-the-badge" />
+    <img src="https://img.shields.io/github/license/sunwookim05/Transparent-window?style=flat-square" />
   </a>
-  <img src="https://img.shields.io/github/stars/sunwookim05/Transparent-window?style=for-the-badge" />
-  <img src="https://img.shields.io/github/forks/sunwookim05/Transparent-window?style=for-the-badge" />
+  <img src="https://img.shields.io/github/stars/sunwookim05/Transparent-window?style=flat-square" />
+  <img src="https://img.shields.io/github/forks/sunwookim05/Transparent-window?style=flat-square" />
 </p>
-
 
 
 ## 📦 Latest Release
