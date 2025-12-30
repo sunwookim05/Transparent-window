@@ -13,6 +13,7 @@
 #define ALPHA_TRANSPARENT 150
 #define ALPHA_MENU 175
 #define ALPHA_OPAQUE 255
+#define MAX_TRACKED_WINDOWS 64
 
 static volatile boolean ctrlDown = false;
 static volatile boolean winDown  = false;
@@ -31,7 +32,7 @@ typedef struct {
     BYTE originalAlpha;
 } WindowAlpha;
 
-#define MAX_TRACKED_WINDOWS 256
+
 static WindowAlpha trackedWindows[MAX_TRACKED_WINDOWS];
 static int trackedCount = 0;
 
@@ -97,6 +98,21 @@ static void SubclassMenu(HWND hwnd) {
     SetWindowSubclass(hwnd, MenuSubclassProc, 1, 0);
 }
 
+static void RemoveTracked(HWND hwnd) {
+    for (int i = 0; i < trackedCount; i++) {
+        if (trackedWindows[i].hwnd == hwnd) {
+
+            // 뒤에 있는 요소들을 앞으로 당김
+            for (int j = i; j < trackedCount - 1; j++)
+                trackedWindows[j] = trackedWindows[j + 1];
+
+            trackedCount--;
+            return;
+        }
+    }
+}
+
+
 /* ---------------- WinEvent ---------------- */
 
 static void CALLBACK WinEventCallback(HWINEVENTHOOK h, DWORD event, HWND hwnd, LONG obj, LONG child, DWORD tid, DWORD time) {
@@ -110,6 +126,10 @@ static void CALLBACK WinEventCallback(HWINEVENTHOOK h, DWORD event, HWND hwnd, L
     if (obj == OBJID_WINDOW && IsWindowVisible(hwnd) && IsAutoTransparentTarget(hwnd)) {
         ApplyTransparency(hwnd, ALPHA_TRANSPARENT);
         TrackWindow(hwnd);
+    }
+
+    if (event == EVENT_OBJECT_DESTROY && obj == OBJID_WINDOW) {
+        RemoveTracked(hwnd);
     }
 }
 
