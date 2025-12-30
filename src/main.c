@@ -232,7 +232,8 @@ void* appCoreThread(void* arg) {
 
     trayWindow = CreateWindowA(wc.lpszClassName, "", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, null, null, wc.hInstance, null);
 
-    HICON icon = (HICON)LoadImageA(null, "res\\trayicon.ico", IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
+    HICON icon = (HICON)LoadImage(GetModuleHandle(null), MAKEINTRESOURCE(102), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR | LR_SHARED);
+
     if (!icon)
         icon = LoadIcon(null, IDI_APPLICATION);
 
@@ -261,9 +262,6 @@ void* appCoreThread(void* arg) {
     }
 
     Shell_NotifyIconA(NIM_DELETE, &nid);
-
-    if (icon && icon != LoadIcon(null, IDI_APPLICATION))
-        DestroyIcon(icon);  // 🧹 리소스 정리 (권장)
 
     if (winEventHook) UnhookWinEvent(winEventHook);
     if (keyHook) UnhookWindowsHookEx(keyHook);

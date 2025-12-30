@@ -1,5 +1,7 @@
 #include <windows.h>
 
-#define IDI_SSL_ICON 101
+#define IDI_WIN_ICON 101
+#define IDI_TRAY_ICON 102
 
-IDI_SSL_ICON ICON "windows.ico"
+IDI_WIN_ICON ICON "windows.ico"
+IDI_TRAY_ICON ICON "trayicon.ico"
