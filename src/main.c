@@ -19,6 +19,7 @@ static volatile boolean ctrlDown = false;
 static volatile boolean winDown  = false;
 static volatile boolean winUsed  = false;
 static volatile boolean shuttingDown = false;
+static volatile boolean suppressWin = false;
 
 static HHOOK keyHook = null;
 static HHOOK mouseHook = null;
@@ -79,12 +80,23 @@ static BOOL CALLBACK EnumExplorerWindows(HWND hwnd, LPARAM l) {
 }
 
 /* ---------------- Menu Transparency ---------------- */
-
+#define WM_REAPPLY_ALPHA (WM_USER + 200)
 static LRESULT CALLBACK MenuSubclassProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref) {
-    if (msg == WM_NCDESTROY)
-        RemoveWindowSubclass(hwnd, MenuSubclassProc, id);
-    else
-        ApplyTransparency(hwnd, ALPHA_MENU);
+    switch (msg) {
+
+        case WM_SHOWWINDOW:
+        case WM_INITMENUPOPUP:
+            break; // 여기서는 안 건드림
+
+        case WM_PRINTCLIENT:
+        case WM_NCPAINT:
+            ApplyTransparency(hwnd, ALPHA_MENU);
+            break;
+
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, MenuSubclassProc, id);
+            break;
+    }
 
     return DefSubclassProc(hwnd, msg, w, l);
 }
@@ -117,6 +129,14 @@ static void RemoveTracked(HWND hwnd) {
 
 static void CALLBACK WinEventCallback(HWINEVENTHOOK h, DWORD event, HWND hwnd, LONG obj, LONG child, DWORD tid, DWORD time) {
     if (!IsWindow(hwnd)) return;
+
+    char cls[128];
+    GetClassNameA(hwnd, cls, sizeof(cls));
+
+    if (!strcmp(cls, "#32768")) {
+        SubclassMenu(hwnd);
+        return;
+    }
 
     if (obj == OBJID_MENU) {
         SubclassMenu(hwnd);
@@ -182,64 +202,119 @@ static LRESULT CALLBACK TrayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
 /* ---------------- Hooks ---------------- */
 
-static LRESULT CALLBACK KeyboardHook(int code, WPARAM w, LPARAM l) {
-    if (code == HC_ACTION && !shuttingDown) {
-        KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)l;
-        boolean down = (w == WM_KEYDOWN || w == WM_SYSKEYDOWN);
-        boolean up   = (w == WM_KEYUP   || w == WM_SYSKEYUP);
+static LRESULT CALLBACK KeyboardHook(int code, WPARAM w, LPARAM l){
+    if (code != HC_ACTION || shuttingDown)
+        return CallNextHookEx(NULL, code, w, l);
 
-        if (k->vkCode == VK_CONTROL)
-            ctrlDown = down ? true : (up ? false : ctrlDown);
+    KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)l;
 
-        if (k->vkCode == VK_LWIN || k->vkCode == VK_RWIN) {
-            if (down) {
-                winDown = true;
-                winUsed = false;
-            } else if (up) {
-                winDown = false;
-                if (winUsed) {
-                    winUsed = false;
-                    return 1;
-                }
-            }
-        }
+    const boolean down = (w == WM_KEYDOWN || w == WM_SYSKEYDOWN);
+    const boolean up   = (w == WM_KEYUP   || w == WM_SYSKEYUP);
+
+    /* -------- Ctrl -------- */
+    if (k->vkCode == VK_CONTROL) {
+        if (down) ctrlDown = true;
+        else if (up) ctrlDown = false;
+
+        return CallNextHookEx(NULL, code, w, l);
     }
-    return CallNextHookEx(null, code, w, l);
+
+    /* -------- Win (좌/우 공통) -------- */
+    if (k->vkCode == VK_LWIN || k->vkCode == VK_RWIN) {
+
+        if (down) {
+            winDown = true;
+            return CallNextHookEx(NULL, code, w, l);
+        }
+
+        if (up) {
+            winDown = false;
+
+            if (winUsed) {
+
+                winUsed = false;
+
+                // ⭐ Win 키 자연스럽게 해제 (시작메뉴 X)
+                INPUT in[3] = {0};
+
+                // Ctrl down
+                in[0].type = INPUT_KEYBOARD;
+                in[0].ki.wVk = VK_CONTROL;
+
+                // Win up
+                in[1].type = INPUT_KEYBOARD;
+                in[1].ki.wVk = k->vkCode;
+                in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+
+                // Ctrl up
+                in[2].type = INPUT_KEYBOARD;
+                in[2].ki.wVk = VK_CONTROL;
+                in[2].ki.dwFlags = KEYEVENTF_KEYUP;
+
+                SendInput(3, in, sizeof(INPUT));
+
+                return 1;   // 원래 Win-UP 은 시스템으로 안 보냄
+            }
+
+            return CallNextHookEx(NULL, code, w, l);
+        }
+
+        return CallNextHookEx(NULL, code, w, l);
+    }
+
+    return CallNextHookEx(NULL, code, w, l);
 }
 
-static LRESULT CALLBACK MouseHook(int code, WPARAM w, LPARAM l) {
+
+static LRESULT CALLBACK MouseHook(int code, WPARAM w, LPARAM l){
     if (code != HC_ACTION || shuttingDown)
-        return CallNextHookEx(null, code, w, l);
+        return CallNextHookEx(NULL, code, w, l);
 
     boolean ctrl = ctrlDown || (GetAsyncKeyState(VK_CONTROL) & 0x8000);
     boolean win  = winDown  || (GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000);
 
-    /* 🔒 Ctrl / Win 안 눌리면 훅 비활성 */
     if (!ctrl && !win)
-        return CallNextHookEx(null, code, w, l);
+        return CallNextHookEx(NULL, code, w, l);
 
     MSLLHOOKSTRUCT* m = (MSLLHOOKSTRUCT*)l;
     HWND hwnd = GetAncestor(WindowFromPoint(m->pt), GA_ROOT);
-    if (!hwnd) return CallNextHookEx(null, code, w, l);
+    if (!hwnd)
+        return CallNextHookEx(NULL, code, w, l);
 
+    /* -------- Middle Click -------- */
     if (w == WM_MBUTTONDOWN) {
-        if (ctrl && ApplyTransparency(hwnd, ALPHA_TRANSPARENT)) return 1;
-        if (win  && ApplyTransparency(hwnd, ALPHA_OPAQUE)) {
-            winUsed = true;
+
+        // Ctrl + Middle → 투명
+        if (ctrl && ApplyTransparency(hwnd, ALPHA_TRANSPARENT))
+            return 1;
+
+        // Win + Middle → 원래 불투명
+        if (win && ApplyTransparency(hwnd, ALPHA_OPAQUE)) {
+
+            winUsed = true;   // ← KeyboardHook 에서 Win-UP 막음
+            winDown = false;
+
             return 1;
         }
     }
 
+    /* -------- Ctrl + Win + Wheel → 투명도 조절 -------- */
     if (w == WM_MOUSEWHEEL && ctrl && win) {
+
         int delta = GET_WHEEL_DELTA_WPARAM(m->mouseData);
         BYTE a = GetWindowAlpha(hwnd);
-        a = delta > 0 ? min(255, a + 15) : max(60, a - 15);
+
+        a = (delta > 0) ? min(255, a + 15) : max(60,  a - 15);
+
         ApplyTransparency(hwnd, a);
+        winUsed = true;   // 이 경우도 메뉴 안 뜨게 처리
+
         return 1;
     }
 
-    return CallNextHookEx(null, code, w, l);
+    return CallNextHookEx(NULL, code, w, l);
 }
+
 
 /* ---------------- Core Thread ---------------- */
 
@@ -250,7 +325,7 @@ void* appCoreThread(void* arg) {
     wc.lpszClassName = "TransparencyTray";
     RegisterClassA(&wc);
 
-    trayWindow = CreateWindowA(wc.lpszClassName, "", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, null, null, wc.hInstance, null);
+    trayWindow = CreateWindowA(wc.lpszClassName, "", WS_OVERLAPPED | WS_SYSMENU, 0, 0, 0, 0, null, null, wc.hInstance, null);
 
     HICON icon = (HICON)LoadImage(GetModuleHandle(null), MAKEINTRESOURCE(102), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR | LR_SHARED);
 
