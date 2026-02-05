@@ -14,10 +14,35 @@
 #define ALPHA_OPAQUE 255
 #define MAX_TRACKED_WINDOWS 64
 
+#define ID_SETTING_EXPLORER  10
+
+#define ID_PRESET_SOLID     20
+#define ID_PRESET_SOFT      21
+#define ID_PRESET_GLASS     22
+#define ID_PRESET_GHOST     23
+
+
 typedef struct {
     HWND hwnd;
     BYTE originalAlpha;
 } WindowAlpha;
+
+typedef enum {
+    PRESET_SOLID,
+    PRESET_SOFT,
+    PRESET_GLASS,
+    PRESET_GHOST
+} TransparencyPreset;
+
+typedef struct {
+    boolean explorerAuto;
+    TransparencyPreset preset;
+} AppSettings;
+
+static AppSettings g_settings = {
+    true,
+    PRESET_GLASS
+};
 
 static volatile boolean ctrlDown = false;
 static volatile boolean winDown  = false;
@@ -31,6 +56,48 @@ static HWINEVENTHOOK winEventHook = null;
 static HWND trayWindow = null;
 static WindowAlpha trackedWindows[MAX_TRACKED_WINDOWS];
 static int trackedCount = 0;
+
+static BYTE PresetToAlpha(TransparencyPreset p) {
+    switch (p) {
+        case PRESET_SOLID: return 255;
+        case PRESET_SOFT:  return 200;
+        case PRESET_GLASS: return 150;
+        case PRESET_GHOST: return 80;
+    }
+    return 150;
+}
+
+static void SaveSettings(void) {
+    HKEY key;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER,"Software\\SystemTransparency", 0, NULL, 0, KEY_WRITE, NULL, &key, NULL) != ERROR_SUCCESS)
+        return;
+
+    DWORD explorer = g_settings.explorerAuto;
+    DWORD preset   = g_settings.preset;
+
+    RegSetValueExA(key, "ExplorerAuto", 0, REG_DWORD, (BYTE*)&explorer, sizeof(DWORD));
+    RegSetValueExA(key, "Preset", 0, REG_DWORD, (BYTE*)&preset, sizeof(DWORD));
+
+    RegCloseKey(key);
+}
+
+static void LoadSettings(void) {
+    HKEY key;
+    DWORD size, type, val;
+
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\SystemTransparency", 0, KEY_READ, &key ) != ERROR_SUCCESS)
+        return;
+
+    size = sizeof(DWORD);
+    if (RegQueryValueExA(key, "ExplorerAuto", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
+        g_settings.explorerAuto = (boolean)val;
+
+    size = sizeof(DWORD);
+    if (RegQueryValueExA(key, "Preset", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
+        g_settings.preset = (TransparencyPreset)val;
+
+    RegCloseKey(key);
+}
 
 static boolean IsAlreadyTracked(HWND hwnd) {
     for (int i = 0; i < trackedCount; i++)
@@ -82,13 +149,29 @@ static void TrackWindow(HWND hwnd) {
     trackedWindows[trackedCount++] = (WindowAlpha){ hwnd, GetWindowAlpha(hwnd) };
 }
 
-static BOOL CALLBACK EnumExplorerWindows(HWND hwnd, LPARAM l) {
-    if (!IsWindowVisible(hwnd)) return true;
-    if (!IsAutoTransparentTarget(hwnd)) return true;
-    ApplyTransparency(hwnd, ALPHA_TRANSPARENT);
+static BOOL CALLBACK EnumExplorerWindows(HWND hwnd, LPARAM lParam) {
+    // 1. 유효한 창인지 확인
+    if (!IsWindow(hwnd) || !IsWindowVisible(hwnd))
+        return true;
+
+    // 2. Explorer 자동 투명화 설정 체크
+    if (!g_settings.explorerAuto)
+        return true;
+
+    // 3. 대상 창 확인 (Explorer/파일창)
+    if (!IsAutoTransparentTarget(hwnd))
+        return true;
+
+    // 4. 기본 프리셋에 맞춰 투명도 적용
+    BYTE alpha = PresetToAlpha(g_settings.preset);
+    ApplyTransparency(hwnd, alpha);
+
+    // 5. 추적 리스트에 추가
     TrackWindow(hwnd);
+
     return true;
 }
+
 
 static LRESULT CALLBACK MenuSubclassProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref)  {
     switch (msg) {
@@ -141,6 +224,9 @@ static void CALLBACK WinEventCallback(HWINEVENTHOOK h, DWORD event, HWND hwnd, L
         if (!strcmp(cls, "TaskSwitcherWnd") || !strcmp(cls, "MultitaskingViewFrame"))
             return;
 
+        if (!g_settings.explorerAuto) // 자동 투명화 OFF면 그냥 리턴
+            return;
+
         ApplyTransparency(hwnd, ALPHA_TRANSPARENT);
         TrackWindow(hwnd);
     }
@@ -149,23 +235,51 @@ static void CALLBACK WinEventCallback(HWINEVENTHOOK h, DWORD event, HWND hwnd, L
         RemoveTracked(hwnd);
 }
 
+static BOOL CALLBACK ApplyExplorerAutoAll(HWND hwnd, LPARAM lParam) {
+    if (!IsWindowVisible(hwnd)) return TRUE;
+
+    if (IsAutoTransparentTarget(hwnd)) {
+        BYTE alpha = g_settings.explorerAuto ? PresetToAlpha(g_settings.preset) : 255;
+        ApplyTransparency(hwnd, alpha);
+        RefreshDwm(hwnd);
+
+        if (g_settings.explorerAuto) TrackWindow(hwnd);
+    }
+    return TRUE;
+}
+
 static LRESULT CALLBACK TrayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
     if (msg == WM_TRAY && l == WM_RBUTTONUP) {
-        HMENU m = CreatePopupMenu();
+        HMENU root = CreatePopupMenu();
+        HMENU setting = CreatePopupMenu();
+        HMENU preset  = CreatePopupMenu();
 
-        AppendMenuA(m, MF_STRING, 100, "System Transparency");
-        AppendMenuA(m, MF_STRING, 101, "Licensed under MIT");
-        AppendMenuA(m, MF_SEPARATOR, 0, NULL);
-        AppendMenuA(m, MF_STRING, 1, "Developed by sunwookim05");
-        AppendMenuA(m, MF_STRING, 2, "GitHub");
-        AppendMenuA(m, MF_SEPARATOR, 0, NULL);
-        AppendMenuA(m, MF_STRING, 3, "Exit");
+        AppendMenuA(root, MF_STRING, 0, "System Transparency");
+        AppendMenuA(root, MF_STRING, 0, "Licensed under MIT");
+        AppendMenuA(root, MF_SEPARATOR, 0, NULL);
+
+        /* Explorer Auto */
+        AppendMenuA(setting, MF_STRING | (g_settings.explorerAuto ? MF_CHECKED : 0), ID_SETTING_EXPLORER, "Explorer Auto Transparency");
+        /* Presets */
+        AppendMenuA(preset, MF_STRING | (g_settings.preset == PRESET_SOLID ? MF_CHECKED : 0), ID_PRESET_SOLID, "Solid");
+        AppendMenuA(preset, MF_STRING | (g_settings.preset == PRESET_SOFT  ? MF_CHECKED : 0), ID_PRESET_SOFT,  "Soft");
+        AppendMenuA(preset, MF_STRING | (g_settings.preset == PRESET_GLASS ? MF_CHECKED : 0), ID_PRESET_GLASS, "Glass");
+        AppendMenuA(preset, MF_STRING | (g_settings.preset == PRESET_GHOST ? MF_CHECKED : 0), ID_PRESET_GHOST, "Ghost");
+
+        AppendMenuA(setting, MF_POPUP, (UINT_PTR)preset, "Preset");
+        AppendMenuA(root, MF_POPUP, (UINT_PTR)setting, "Setting");
+
+        AppendMenuA(root, MF_SEPARATOR, 0, NULL);
+        AppendMenuA(root, MF_STRING, 1, "Developed by sunwookim05");
+        AppendMenuA(root, MF_STRING, 2, "GitHub");
+        AppendMenuA(root, MF_SEPARATOR, 0, NULL);
+        AppendMenuA(root, MF_STRING, 3, "Exit");
 
         POINT p;
         GetCursorPos(&p);
         SetForegroundWindow(hwnd);
 
-        int cmd = TrackPopupMenu( m, TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, NULL);
+        UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, NULL);
 
         switch (cmd) {
             case 1:
@@ -180,9 +294,25 @@ static LRESULT CALLBACK TrayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 shuttingDown = true;
                 PostQuitMessage(0);
                 break;
+
+            case ID_SETTING_EXPLORER:
+                g_settings.explorerAuto = !g_settings.explorerAuto;
+                SaveSettings();
+                EnumWindows(ApplyExplorerAutoAll, 0);
+                break;
+
+
+            case ID_PRESET_SOLID:
+            case ID_PRESET_SOFT:
+            case ID_PRESET_GLASS:
+            case ID_PRESET_GHOST:
+                g_settings.preset = (TransparencyPreset)(cmd - ID_PRESET_SOLID);
+                SaveSettings();
+                EnumWindows(ApplyExplorerAutoAll, 0);
+                break;
         }
 
-        DestroyMenu(m);
+        DestroyMenu(root);
         return 0;
     }
 
@@ -339,6 +469,8 @@ void* appCoreThread(void* arg) {
 }
 
 int main(void) {
+    LoadSettings();
+
     EnumWindows(EnumExplorerWindows, 0);
 
     Thread core = new_Thread(appCoreThread);
