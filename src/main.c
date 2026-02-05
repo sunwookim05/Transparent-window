@@ -150,23 +150,18 @@ static void TrackWindow(HWND hwnd) {
 }
 
 static BOOL CALLBACK EnumExplorerWindows(HWND hwnd, LPARAM lParam) {
-    // 1. 유효한 창인지 확인
     if (!IsWindow(hwnd) || !IsWindowVisible(hwnd))
         return true;
 
-    // 2. Explorer 자동 투명화 설정 체크
     if (!g_settings.explorerAuto)
         return true;
 
-    // 3. 대상 창 확인 (Explorer/파일창)
     if (!IsAutoTransparentTarget(hwnd))
         return true;
 
-    // 4. 기본 프리셋에 맞춰 투명도 적용
     BYTE alpha = PresetToAlpha(g_settings.preset);
     ApplyTransparency(hwnd, alpha);
 
-    // 5. 추적 리스트에 추가
     TrackWindow(hwnd);
 
     return true;
@@ -258,9 +253,7 @@ static LRESULT CALLBACK TrayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         AppendMenuA(root, MF_STRING, 0, "Licensed under MIT");
         AppendMenuA(root, MF_SEPARATOR, 0, NULL);
 
-        /* Explorer Auto */
         AppendMenuA(setting, MF_STRING | (g_settings.explorerAuto ? MF_CHECKED : 0), ID_SETTING_EXPLORER, "Explorer Auto Transparency");
-        /* Presets */
         AppendMenuA(preset, MF_STRING | (g_settings.preset == PRESET_SOLID ? MF_CHECKED : 0), ID_PRESET_SOLID, "Solid");
         AppendMenuA(preset, MF_STRING | (g_settings.preset == PRESET_SOFT  ? MF_CHECKED : 0), ID_PRESET_SOFT,  "Soft");
         AppendMenuA(preset, MF_STRING | (g_settings.preset == PRESET_GLASS ? MF_CHECKED : 0), ID_PRESET_GLASS, "Glass");
