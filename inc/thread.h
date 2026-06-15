@@ -11,6 +11,7 @@
 typedef struct THREAD {
     ThreadHandle id; /**< Thread identifier */
     void* (*function)(void*); /**< Function pointer for thread execution */
+    void* arg;
     
     /**
      * @brief Starts the thread.

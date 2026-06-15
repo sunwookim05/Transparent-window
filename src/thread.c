@@ -3,18 +3,26 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+static DWORD WINAPI threadEntry(LPVOID arg) {
+    Thread* self = (Thread*)arg;
+    self->function(self->arg);
+    return 0;
+}
+#endif
+
 void start(Thread* self, ...) {
     va_list args;
     va_start(args, self);
     
-    void* arg = va_arg(args, void*);
+    self->arg = va_arg(args, void*);
     
     va_end(args);
 
     #ifdef _WIN32
-        self->id = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)self->function, arg, 0, NULL);
+        self->id = CreateThread(NULL, 0, threadEntry, self, 0, NULL);
     #else
-        pthread_create(&self->id, NULL, self->function, arg);
+        pthread_create(&self->id, NULL, self->function, self->arg);
     #endif
 }
 
@@ -44,6 +52,8 @@ void cancel(Thread* self) {
 }
 
 void exit_thread(Thread* self) {
+    (void)self;
+
     #ifdef _WIN32
         ExitThread(0);
     #else
@@ -53,15 +63,17 @@ void exit_thread(Thread* self) {
 
 void delete_thread(Thread* self) {
     #ifdef _WIN32
-        CloseHandle(self->id);
+        if (self->id)
+            CloseHandle(self->id);
     #endif
-    free(self);
+    self->id = 0;
 }
 
 Thread new_Thread(void* (*function)(void*)) {
     return (Thread) {
         .id = 0,
         .function = function,
+        .arg = NULL,
         .start = start,
         .join = join,
         .detach = detach,

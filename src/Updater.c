@@ -8,7 +8,7 @@
 
 #define UPDATE_API_HOST L"api.github.com"
 #define UPDATE_API_PATH L"/repos/sunwookim05/Transparent-window/releases/latest"
-#define UPDATE_USER_AGENT L"SystemTransparency/1.0.0"
+#define UPDATE_USER_AGENT L"SystemTransparency/1.0.1"
 
 typedef struct {
     string data;
@@ -248,25 +248,25 @@ static string findExeAssetUrl(string json) {
     return null;
 }
 
-static void parseVersion(string version, int out[3]) {
+static void parseVersion(string version, int out[4]) {
     string p = version;
 
-    out[0] = out[1] = out[2] = 0;
+    out[0] = out[1] = out[2] = out[3] = 0;
 
     while (*p && (*p < '0' || *p > '9'))
         p++;
 
-    sscanf(p, "%d.%d.%d", &out[0], &out[1], &out[2]);
+    sscanf(p, "%d.%d.%d.%d", &out[0], &out[1], &out[2], &out[3]);
 }
 
 static boolean isRemoteNewer(string remoteTag) {
-    int remote[3];
-    int current[3];
+    int remote[4];
+    int current[4];
 
     parseVersion(remoteTag, remote);
     parseVersion(APP_VERSION, current);
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         if (remote[i] > current[i]) return true;
         if (remote[i] < current[i]) return false;
     }

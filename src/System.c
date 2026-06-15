@@ -151,6 +151,8 @@ int processIsRunning(Process* self) {
 }
 
 void processList(Process* self) {
+    (void)self;
+
     #ifdef _WIN32
         HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (hSnapshot == INVALID_HANDLE_VALUE) {
@@ -188,6 +190,8 @@ void processList(Process* self) {
 }
 
 int processAppExists(Process* self, const string name) {
+    (void)self;
+
     #ifdef _WIN32
         HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (hSnapshot == INVALID_HANDLE_VALUE) {
@@ -231,6 +235,8 @@ int processAppExists(Process* self, const string name) {
 }
 
 int processKillByName(Process* self, const string name) {
+    (void)self;
+
     #ifdef _WIN32
         HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (hSnapshot == INVALID_HANDLE_VALUE) {
@@ -266,6 +272,8 @@ int processKillByName(Process* self, const string name) {
 
 #ifdef _WIN32
     DWORD processFindByName(Process* self, const string name) {
+        (void)self;
+
         HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (hSnapshot == INVALID_HANDLE_VALUE) {
             return 0;

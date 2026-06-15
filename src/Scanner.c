@@ -67,7 +67,7 @@ uint64_t nextULong(void){
 
 boolean nextBoolean(void){
     boolean b = false;
-    string s = (string)calloc(0, sizeof(char) * 5);
+    string s = (string)calloc(6, sizeof(char));
     scanf("%5s", s);
     if(atoi(s) | !(((*(s+0)|0x20)^'t') ^ ((*(s+1)|0x20)^'r') ^ ((*(s+2)|0x20)^'u') ^ ((*(s+3)|0x20)^'e'))) b = true;
     free(s);
@@ -106,16 +106,18 @@ string next(void){
 string nextLine(void){
     char c;
     uint16_t i = 0;
-    string s = (string)calloc(0, sizeof(char) * 2);
+    string s = (string)calloc(4096, sizeof(char));
     while ((i < 4096 - 1) && ((c = fgetc(stdin)) != EOF) && (c != '\n')) {
         *(s + i++) = c;
-        s = (string)realloc(s, sizeof(char) * (i + 1));
     }
     *(s + i) = '\0';
+    s = (string)realloc(s, sizeof(char) * (strlen(s) + 1));
     return s;
 }
 
 Scanner new_Scanner(struct __stdin_t source){
+    (void)source;
+
     return (Scanner){
         .nextChar = nextChar,
         .nextByte = nextByte,
