@@ -146,40 +146,140 @@ fail:
     return false;
 }
 
+static boolean wideToUtf8(const wchar_t* text, string out, DWORD outSize) {
+    int len = WideCharToMultiByte(CP_UTF8, 0, text, -1, out, outSize, null, null);
+    return len > 0 && (DWORD)len <= outSize;
+}
+
+static boolean httpGetUrl(string url, HttpBuffer* buffer) {
+    char currentUrl[4096];
+
+    lstrcpynA(currentUrl, url, sizeof(currentUrl));
+
+    for (int redirect = 0; redirect < 8; redirect++) {
+        URL_COMPONENTSW parts;
+        wchar_t host[256];
+        wchar_t path[2048];
+        wchar_t extra[2048];
+        wchar_t requestPath[4096];
+        wchar_t location[4096];
+        wchar_t* wideUrl;
+        HINTERNET session = null;
+        HINTERNET connect = null;
+        HINTERNET request = null;
+        BOOL ok;
+        DWORD status = 0;
+        DWORD statusSize = sizeof(status);
+        DWORD locationSize = sizeof(location);
+
+        wideUrl = utf8ToWide(currentUrl);
+        if (!wideUrl)
+            return false;
+
+        ZeroMemory(&parts, sizeof(parts));
+        ZeroMemory(host, sizeof(host));
+        ZeroMemory(path, sizeof(path));
+        ZeroMemory(extra, sizeof(extra));
+
+        parts.dwStructSize = sizeof(parts);
+        parts.lpszHostName = host;
+        parts.dwHostNameLength = sizeof(host) / sizeof(host[0]);
+        parts.lpszUrlPath = path;
+        parts.dwUrlPathLength = sizeof(path) / sizeof(path[0]);
+        parts.lpszExtraInfo = extra;
+        parts.dwExtraInfoLength = sizeof(extra) / sizeof(extra[0]);
+
+        if (!WinHttpCrackUrl(wideUrl, 0, 0, &parts)) {
+            free(wideUrl);
+            return false;
+        }
+
+        if (parts.nScheme != INTERNET_SCHEME_HTTPS) {
+            free(wideUrl);
+            return false;
+        }
+
+        swprintf(requestPath, sizeof(requestPath) / sizeof(requestPath[0]), L"%s%s", path, extra);
+        free(wideUrl);
+
+        session = WinHttpOpen(UPDATE_USER_AGENT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!session)
+            return false;
+
+        connect = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (!connect) {
+            WinHttpCloseHandle(session);
+            return false;
+        }
+
+        request = WinHttpOpenRequest(connect, L"GET", requestPath, null,
+            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        if (!request) {
+            WinHttpCloseHandle(connect);
+            WinHttpCloseHandle(session);
+            return false;
+        }
+
+        ok = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+            WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+        if (!ok || !WinHttpReceiveResponse(request, null)) {
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connect);
+            WinHttpCloseHandle(session);
+            return false;
+        }
+
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            null, &status, &statusSize, null);
+
+        if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+            if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION, null, location, &locationSize, null)) {
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connect);
+                WinHttpCloseHandle(session);
+                return false;
+            }
+
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connect);
+            WinHttpCloseHandle(session);
+
+            if (!wideToUtf8(location, currentUrl, sizeof(currentUrl)))
+                return false;
+
+            continue;
+        }
+
+        if (status < 200 || status >= 300) {
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connect);
+            WinHttpCloseHandle(session);
+            return false;
+        }
+
+        ok = readResponse(request, buffer);
+
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+
+        return ok ? true : false;
+    }
+
+    return false;
+}
+
 static boolean httpDownloadUrl(string url, string outPath) {
-    URL_COMPONENTSW parts;
-    wchar_t host[256];
-    wchar_t path[2048];
-    wchar_t* wideUrl;
     HttpBuffer buffer;
     HANDLE file;
     DWORD written;
     boolean ok = false;
 
-    wideUrl = utf8ToWide(url);
-    if (!wideUrl)
-        return false;
+    buffer.data = null;
+    buffer.size = 0;
 
-    ZeroMemory(&parts, sizeof(parts));
-    parts.dwStructSize = sizeof(parts);
-    parts.lpszHostName = host;
-    parts.dwHostNameLength = sizeof(host) / sizeof(host[0]);
-    parts.lpszUrlPath = path;
-    parts.dwUrlPathLength = sizeof(path) / sizeof(path[0]);
-
-    if (!WinHttpCrackUrl(wideUrl, 0, 0, &parts)) {
-        free(wideUrl);
-        return false;
-    }
-
-    if (parts.nScheme != INTERNET_SCHEME_HTTPS) {
-        free(wideUrl);
-        return false;
-    }
-
-    free(wideUrl);
-
-    if (!httpGet(host, path, &buffer))
+    if (!httpGetUrl(url, &buffer))
         return false;
 
     file = CreateFileA(outPath, GENERIC_WRITE, 0, null, CREATE_ALWAYS,
