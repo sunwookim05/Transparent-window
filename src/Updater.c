@@ -15,6 +15,28 @@ typedef struct {
     DWORD size;
 } HttpBuffer;
 
+static void updateLog(string message) {
+    char tempPath[MAX_PATH];
+    char logPath[MAX_PATH];
+    SYSTEMTIME time;
+    FILE* file;
+
+    if (!GetTempPathA(sizeof(tempPath), tempPath))
+        return;
+
+    if ((size_t)snprintf(logPath, sizeof(logPath), "%s%sUpdate.log", tempPath, APP_NAME) >= sizeof(logPath))
+        return;
+
+    GetLocalTime(&time);
+    file = fopen(logPath, "a");
+    if (!file)
+        return;
+
+    fprintf(file, "%04u-%02u-%02u %02u:%02u:%02u %s\n",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond, message);
+    fclose(file);
+}
+
 static string duplicateRange(string start, string end) {
     size_t len;
     string out;
@@ -72,10 +94,13 @@ static boolean readResponse(HINTERNET request, HttpBuffer* buffer) {
     buffer->data = null;
     buffer->size = 0;
 
-    do {
+    while (true) {
         available = 0;
         if (!WinHttpQueryDataAvailable(request, &available))
             return false;
+
+        if (available == 0)
+            break;
 
         while (available > 0) {
             DWORD toRead = min(available, sizeof(chunk));
@@ -91,7 +116,7 @@ static boolean readResponse(HINTERNET request, HttpBuffer* buffer) {
 
             available -= read;
         }
-    } while (available > 0);
+    }
 
     return buffer->data != null;
 }
@@ -152,17 +177,17 @@ static boolean wideToUtf8(const wchar_t* text, string out, DWORD outSize) {
 }
 
 static boolean httpGetUrl(string url, HttpBuffer* buffer) {
-    char currentUrl[4096];
+    char currentUrl[16384];
 
     lstrcpynA(currentUrl, url, sizeof(currentUrl));
 
     for (int redirect = 0; redirect < 8; redirect++) {
         URL_COMPONENTSW parts;
-        wchar_t host[256];
-        wchar_t path[2048];
-        wchar_t extra[2048];
-        wchar_t requestPath[4096];
-        wchar_t location[4096];
+        wchar_t host[512];
+        wchar_t path[8192];
+        wchar_t extra[8192];
+        wchar_t requestPath[16384];
+        wchar_t location[16384];
         wchar_t* wideUrl;
         HINTERNET session = null;
         HINTERNET connect = null;
@@ -442,47 +467,73 @@ static void checkNow(Updater* self) {
     string url = null;
     char installedExe[MAX_PATH];
     char newExe[MAX_PATH];
+    char message[512];
 
     json.data = null;
     json.size = 0;
 
-    if (!self->installer.isInstalledPath(&self->installer))
-        return;
+    updateLog("check started");
 
-    if (!httpGet(UPDATE_API_HOST, UPDATE_API_PATH, &json))
+    if (!self->installer.isInstalledPath(&self->installer)) {
+        updateLog("skipped: not running from installed path");
         return;
+    }
+
+    if (!httpGet(UPDATE_API_HOST, UPDATE_API_PATH, &json)) {
+        updateLog("failed: latest api request");
+        return;
+    }
 
     tag = jsonStringValue(json.data, "tag_name");
     if (!tag || !isRemoteNewer(tag)) {
+        if (tag) {
+            snprintf(message, sizeof(message), "skipped: remote %s is not newer than %s", tag, APP_VERSION);
+            updateLog(message);
+        } else {
+            updateLog("failed: tag_name missing");
+        }
         cleanupUpdateData(&tag, &url, &json.data);
         return;
     }
 
+    snprintf(message, sizeof(message), "new version found: %s", tag);
+    updateLog(message);
+
     url = findExeAssetUrl(json.data);
     if (!url) {
+        updateLog("failed: SystemTransparency.exe asset missing");
         cleanupUpdateData(&tag, &url, &json.data);
         return;
     }
 
     if (!self->installer.getInstalledExePath(&self->installer, installedExe, sizeof(installedExe))) {
+        updateLog("failed: installed exe path");
         cleanupUpdateData(&tag, &url, &json.data);
         return;
     }
 
     if ((size_t)snprintf(newExe, sizeof(newExe), "%s.new.exe", installedExe) >= sizeof(newExe)) {
+        updateLog("failed: new exe path overflow");
         cleanupUpdateData(&tag, &url, &json.data);
         return;
     }
 
     if (!httpDownloadUrl(url, newExe)) {
+        updateLog("failed: download asset");
         cleanupUpdateData(&tag, &url, &json.data);
         return;
     }
 
     cleanupUpdateData(&tag, &url, &json.data);
 
-    if (createUpdateBatch(installedExe, newExe))
+    updateLog("downloaded asset");
+
+    if (createUpdateBatch(installedExe, newExe)) {
+        updateLog("update batch created");
         ExitProcess(0);
+    }
+
+    updateLog("failed: create update batch");
 }
 
 static DWORD WINAPI updateThreadProc(LPVOID arg) {
