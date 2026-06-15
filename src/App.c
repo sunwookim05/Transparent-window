@@ -61,6 +61,12 @@ static void removeTrayIcon(App* self) {
     self->trayIconAdded = false;
 }
 
+static boolean isTrayContextMenu(LPARAM l) {
+    UINT event = LOWORD(l);
+    return l == WM_RBUTTONUP || l == WM_CONTEXTMENU ||
+        event == WM_RBUTTONUP || event == WM_CONTEXTMENU;
+}
+
 static BOOL CALLBACK enumExplorerWindows(HWND hwnd, LPARAM lParam) {
     App* self = (App*)lParam;
 
@@ -152,7 +158,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         return 0;
     }
 
-    if (msg == WM_TRAY && l == WM_RBUTTONUP) {
+    if (msg == WM_TRAY && isTrayContextMenu(l)) {
         HMENU root = CreatePopupMenu();
         HMENU setting = CreatePopupMenu();
         HMENU preset  = CreatePopupMenu();
