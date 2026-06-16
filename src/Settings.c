@@ -1,6 +1,14 @@
 #include <windows.h>
+#include <string.h>
 
 #include "Settings.h"
+
+static void reset(Settings* self) {
+    self->explorerAuto = true;
+    self->startupEnabled = true;
+    self->preset = PRESET_GLASS;
+    self->customAlpha = 150;
+}
 
 static void load(Settings* self) {
     HKEY key;
@@ -14,8 +22,16 @@ static void load(Settings* self) {
         self->explorerAuto = (boolean)val;
 
     size = sizeof(DWORD);
+    if (RegQueryValueExA(key, "StartupEnabled", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
+        self->startupEnabled = (boolean)val;
+
+    size = sizeof(DWORD);
     if (RegQueryValueExA(key, "Preset", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
         self->preset = (TransparencyPreset)val;
+
+    size = sizeof(DWORD);
+    if (RegQueryValueExA(key, "CustomAlpha", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
+        self->customAlpha = (BYTE)val;
 
     RegCloseKey(key);
 }
@@ -27,19 +43,22 @@ static void save(Settings* self) {
         return;
 
     DWORD explorer = self->explorerAuto;
+    DWORD startup = self->startupEnabled;
     DWORD preset = self->preset;
+    DWORD customAlpha = self->customAlpha;
 
     RegSetValueExA(key, "ExplorerAuto", 0, REG_DWORD, (BYTE*)&explorer, sizeof(DWORD));
+    RegSetValueExA(key, "StartupEnabled", 0, REG_DWORD, (BYTE*)&startup, sizeof(DWORD));
     RegSetValueExA(key, "Preset", 0, REG_DWORD, (BYTE*)&preset, sizeof(DWORD));
-
+    RegSetValueExA(key, "CustomAlpha", 0, REG_DWORD, (BYTE*)&customAlpha, sizeof(DWORD));
     RegCloseKey(key);
 }
 
 Settings new_Settings(void) {
-    return (Settings) {
-        .explorerAuto = true,
-        .preset = PRESET_GLASS,
-        .load = load,
-        .save = save
-    };
+    Settings settings;
+    reset(&settings);
+    settings.load = load;
+    settings.save = save;
+    settings.reset = reset;
+    return settings;
 }

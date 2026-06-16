@@ -8,7 +8,7 @@
 
 #define UPDATE_API_HOST L"api.github.com"
 #define UPDATE_API_PATH L"/repos/sunwookim05/Transparent-window/releases/latest"
-#define UPDATE_USER_AGENT L"SystemTransparency/1.0.2"
+#define UPDATE_USER_AGENT L"SystemTransparency/1.0.3"
 
 typedef struct {
     string data;
@@ -461,7 +461,7 @@ static void cleanupUpdateData(string* tag, string* url, string* jsonData) {
     *jsonData = null;
 }
 
-static void checkNow(Updater* self) {
+static UpdateResult checkNow(Updater* self) {
     HttpBuffer json;
     string tag = null;
     string url = null;
@@ -476,12 +476,12 @@ static void checkNow(Updater* self) {
 
     if (!self->installer.isInstalledPath(&self->installer)) {
         updateLog("skipped: not running from installed path");
-        return;
+        return UPDATE_SKIPPED;
     }
 
     if (!httpGet(UPDATE_API_HOST, UPDATE_API_PATH, &json)) {
         updateLog("failed: latest api request");
-        return;
+        return UPDATE_FAILED;
     }
 
     tag = jsonStringValue(json.data, "tag_name");
@@ -493,7 +493,7 @@ static void checkNow(Updater* self) {
             updateLog("failed: tag_name missing");
         }
         cleanupUpdateData(&tag, &url, &json.data);
-        return;
+        return UPDATE_CURRENT;
     }
 
     snprintf(message, sizeof(message), "new version found: %s", tag);
@@ -503,25 +503,25 @@ static void checkNow(Updater* self) {
     if (!url) {
         updateLog("failed: SystemTransparency.exe asset missing");
         cleanupUpdateData(&tag, &url, &json.data);
-        return;
+        return UPDATE_FAILED;
     }
 
     if (!self->installer.getInstalledExePath(&self->installer, installedExe, sizeof(installedExe))) {
         updateLog("failed: installed exe path");
         cleanupUpdateData(&tag, &url, &json.data);
-        return;
+        return UPDATE_FAILED;
     }
 
     if ((size_t)snprintf(newExe, sizeof(newExe), "%s.new.exe", installedExe) >= sizeof(newExe)) {
         updateLog("failed: new exe path overflow");
         cleanupUpdateData(&tag, &url, &json.data);
-        return;
+        return UPDATE_FAILED;
     }
 
     if (!httpDownloadUrl(url, newExe)) {
         updateLog("failed: download asset");
         cleanupUpdateData(&tag, &url, &json.data);
-        return;
+        return UPDATE_FAILED;
     }
 
     cleanupUpdateData(&tag, &url, &json.data);
@@ -534,6 +534,7 @@ static void checkNow(Updater* self) {
     }
 
     updateLog("failed: create update batch");
+    return UPDATE_FAILED;
 }
 
 static DWORD WINAPI updateThreadProc(LPVOID arg) {

@@ -11,6 +11,7 @@ static BYTE presetToAlpha(Transparency* self, TransparencyPreset preset) {
         case PRESET_SOFT:  return 200;
         case PRESET_GLASS: return 150;
         case PRESET_GHOST: return 80;
+        case PRESET_CUSTOM: return ALPHA_TRANSPARENT;
     }
 
     return 150;

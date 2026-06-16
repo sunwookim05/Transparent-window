@@ -6,6 +6,10 @@
 #include "App.h"
 
 int main(int argc, string* argv) {
+    HANDLE mutex = CreateMutexA(null, true, "SystemTransparencySingleton");
+    if (mutex && GetLastError() == ERROR_ALREADY_EXISTS)
+        return 0;
+
     Installer installer = new_Installer();
 
     if (installer.ensure(&installer, argc, argv))
@@ -20,6 +24,9 @@ int main(int argc, string* argv) {
     app.run(&app);
 
     ExitProcess(0);
+
+    if (mutex)
+        CloseHandle(mutex);
 
     return 0;
 }

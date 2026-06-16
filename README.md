@@ -1,115 +1,94 @@
-# 🪟 System Transparency
+# System Transparency
 
-**System Transparency**는 Windows 환경에서 탐색기 창 및 메뉴를 자동으로 반투명 처리하여  
-작업 환경을 깔끔하고 모던하게 만들어주는 경량 유틸리티입니다.  
-트레이 아이콘과 단축키를 활용해 실시간 투명도 조절도 가능합니다.
+System Transparency is a lightweight Windows tray utility that makes Explorer and selected system windows feel cleaner by applying adjustable transparency in real time.
 
----
+It is written in C with the Win32 API. The app is distributed as a single executable: on first run it can install itself into the user profile, register the required certificate, create a highest-privilege startup task, and keep itself updated from GitHub Releases.
 
 <p align="center">
   <img src="https://img.shields.io/badge/C-100%25-blue?style=flat-square" />
-  <img src="https://img.shields.io/badge/GCC-supported-orange?style=flat-square" />
-  <img src="https://img.shields.io/badge/Platform-Windows-blue?style=flat-square&logo=windows" />
-  <img src="https://img.shields.io/badge/Installer-NSIS-purple?style=flat-square" />
-  <a href="https://github.com/sunwookim05/Transparent-window/commits/main">
-    <img src="https://img.shields.io/github/commit-activity/m/sunwookim05/Transparent-window?style=flat-square"/>
-  </a>
-  <a href="https://github.com/sunwookim05/Transparent-window/issues">
-    <img src="https://img.shields.io/github/issues/sunwookim05/Transparent-window?style=flat-square" />
-  </a>
-  <a href="https://github.com/sunwookim05/Transparent-window/pulls">
-    <img src="https://img.shields.io/github/issues-pr/sunwookim05/Transparent-window?style=flat-square" />
-  </a>
+  <img src="https://img.shields.io/badge/Win32-API-blue?style=flat-square&logo=windows" />
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-blue?style=flat-square" />
+  <img src="https://img.shields.io/github/v/release/sunwookim05/Transparent-window?label=release&style=flat-square" />
+  <img src="https://img.shields.io/github/license/sunwookim05/Transparent-window?style=flat-square" />
 </p>
 
-<p align="center">
-  <a href="https://github.com/sunwookim05/Transparent-window/releases">
-    <img src="https://img.shields.io/github/v/release/sunwookim05/Transparent-window?label=release&style=flat-square" />
-  </a>
-  <a href="https://github.com/sunwookim05/Transparent-window/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/sunwookim05/Transparent-window?style=flat-square" />
-  </a>
-  <img src="https://img.shields.io/github/stars/sunwookim05/Transparent-window?style=flat-square" />
-  <img src="https://img.shields.io/github/forks/sunwookim05/Transparent-window?style=flat-square" />
-</p>
+## Features
 
----
+- Automatic Explorer transparency for supported Windows Explorer and menu windows.
+- Manual transparency toggle with hotkeys:
+  - `Ctrl + Middle Click`: apply the selected preset to the active window.
+  - `Win + Middle Click`: restore the active window to full opacity.
+  - `Ctrl + Win + Mouse Wheel`: adjust the active window opacity step by step.
+- Tray menu with dark owner-drawn styling.
+- Transparency presets:
+  - `Solid`: 255
+  - `Soft`: 200
+  - `Glass`: 150
+  - `Ghost`: 80
+  - `Custom Alpha`: user-defined value from 60 to 255.
+- Custom Alpha dialog with:
+  - dark UI
+  - draggable slider
+  - live numeric value
+  - live preview on the selected window while adjusting.
+- Single-exe first-run setup:
+  - copies itself to `%LOCALAPPDATA%\SystemTransparency\SystemTransparency.exe`
+  - requests UAC when required
+  - registers the bundled certificate
+  - creates a Windows scheduled task with highest privileges for startup.
+- GitHub Releases based auto update.
+- Update log shortcut from the tray menu.
 
-## 📦 Latest Release
-- 🔖 **Release Notes & Download**  
-  👉 [Releases](https://github.com/sunwookim05/Transparent-window/releases)
+## Installation
 
----
+1. Download `SystemTransparency.exe` from the latest release.
+2. Run it once.
+3. Approve the UAC prompt when the app performs first-run setup.
+4. After setup, the installed copy starts from:
 
-## 🛠️ Built With
-- **Language:** C (Win32 API)  
-- **Compiler:** GCC (MinGW)  
-- **Platform:** Windows 10 / Windows 11 (x64)  
-- **Installer:** NSIS  
-- **Type:** Tray-based Desktop Utility
+```text
+%LOCALAPPDATA%\SystemTransparency\SystemTransparency.exe
+```
 
----
+The app then runs from the system tray and automatically starts on future logins.
 
-## ✨ 주요 기능
+## Usage
 
-### 1️⃣ 자동 투명화
-- Windows 탐색기(`CabinetWClass`, `ExploreWClass`) 창 자동 반투명화
-- Windows 11 메뉴 및 컨텍스트 메뉴도 지원
-- 별도 조작 없이 시작 시 자동 적용
+Right-click the tray icon to open the menu.
 
-### 2️⃣ 수동 투명화 및 조절
-- **Ctrl + 마우스 가운데 클릭** → 현재 활성 창 반투명화  
-- **Win + 마우스 가운데 클릭** → 현재 활성 창 불투명화  
-- **Ctrl + Win + 마우스 휠** → 창 투명도 단계별 조절 (최소 60, 최대 255)
+- `Setting > Explorer Auto Transparency`: enable or disable automatic transparency for supported Explorer windows.
+- `Setting > Run at Startup`: enable or disable the startup scheduled task.
+- `Setting > Preset`: choose the transparency level used by automatic mode and `Ctrl + Middle Click`.
+- `Setting > Preset > Custom Alpha...`: choose a custom opacity value from 60 to 255.
+- `Check for Updates`: manually check the latest GitHub Release.
+- `Open Log`: open the updater log file.
 
-### 3️⃣ 트레이 아이콘
-- 시스템 트레이에 상주하며 쉽게 접근 가능
-- 우클릭 메뉴 제공:
-  - Explorer 자동 투명화 ON/OFF
-  - 투명도 프리셋 선택 (Solid / Soft / Glass / Ghost)
-  - 프로그램 정보 확인
-  - GitHub 페이지 이동
-  - 프로그램 종료
+## Updating
 
-### 4️⃣ 프리셋 투명도
-- **Solid:** 255 (완전 불투명)  
-- **Soft:** 200  
-- **Glass:** 150  
-- **Ghost:** 80 (강한 반투명)
+System Transparency checks GitHub Releases and installs a newer `SystemTransparency.exe` when a newer version is available.
 
----
+The update process is designed for the single-exe distribution model. The running app downloads the release asset, schedules replacement of the installed executable, and restarts into the updated version.
 
-## ⚙️ 설치 및 실행
-1. [Releases 페이지](https://github.com/sunwookim05/Transparent-window/releases)에서 `Setup.exe` 다운로드
-2. 설치 후 자동 실행 (Windows 시작 프로그램 등록)
-3. 트레이 아이콘 표시 → 자동 투명화 적용
-4. 필요 시 단축키/마우스 조합으로 창 투명도 조절 가능
+## Build
 
----
+This project uses GCC/MinGW and the Windows resource compiler.
 
-## 🔄 Auto Startup
-- 설치 시 Windows 시작 프로그램에 자동 등록
-- Windows 로그인 시 자동 실행
-- 백그라운드 트레이 앱으로 동작
+```powershell
+windres res\app.rc -O coff -o build\app_res.o
+gcc src\main.c src\App.c src\Installer.c src\Updater.c src\Settings.c src\Transparency.c src\Tracker.c src\thread.c src\System.c src\Scanner.c src\console.c src\algorithm.c build\app_res.o -Iinc -o SystemTransparency.exe -mwindows -luser32 -lshell32 -lcomctl32 -lpsapi -lwinhttp -lshlwapi -ldwmapi -Wall -Wextra
+```
 
----
+## Notes
 
-## ⚠️ 주의 사항
-- 일부 프로그램(게임, 보안 프로그램, GPU 가속 앱)에서는 투명화가 제한될 수 있음
-- 기본적으로 Windows 탐색기 및 메뉴에 최적화
-- 그 외 창은 수동 조절 권장
+- Some protected, game, GPU-accelerated, or security-sensitive windows may reject transparency changes.
+- The app is optimized for Windows Explorer and common shell windows.
+- Administrator rights are required for first-run setup, certificate registration, and highest-privilege startup registration.
 
----
+## License
 
-## 🏷️ Tags
-`windows` `windows11` `win32` `transparency` `tray-app`  
-`system-utility` `installer` `startup` `autostart` `nsis`
+MIT License. See [LICENSE](LICENSE).
 
----
+## Author
 
-## 👨‍💻 개발자 정보
-- 개발자: **sunwookim05**  
-- GitHub: [sunwookim05/Transparent-window](https://github.com/sunwookim05/Transparent-window)  
-- Instagram: [@sunwookim05](https://www.instagram.com/sunwookim05/)  
-- Email: sunwookim052@gmail.com  
-- License: **MIT**
+- GitHub: [sunwookim05](https://github.com/sunwookim05)
+- Repository: [sunwookim05/Transparent-window](https://github.com/sunwookim05/Transparent-window)
