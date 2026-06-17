@@ -31,6 +31,7 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - draggable slider
   - live numeric value
   - live preview on the selected window while adjusting.
+- Dark uninstall confirmation dialog from the tray settings menu.
 - Single-exe first-run setup:
   - copies itself to `%LOCALAPPDATA%\SystemTransparency\SystemTransparency.exe`
   - requests UAC when required
@@ -60,6 +61,7 @@ Right-click the tray icon to open the menu.
 - `Setting > Run at Startup`: enable or disable the startup scheduled task.
 - `Setting > Preset`: choose the transparency level used by automatic mode and `Ctrl + Middle Click`.
 - `Setting > Preset > Custom Alpha...`: choose a custom opacity value from 60 to 255.
+- `Setting > Uninstall`: remove the installed executable, startup task, app registry settings, and bundled certificate registration.
 - `Check for Updates`: manually check the latest GitHub Release.
 - `Open Log`: open the updater log file.
 

@@ -17,6 +17,7 @@
 #define ID_SETTING_STARTUP   11
 #define ID_SETTING_FOLDER    13
 #define ID_SETTING_RESET     14
+#define ID_SETTING_UNINSTALL 15
 
 #define ID_PRESET_SOLID     20
 #define ID_PRESET_SOFT      21
@@ -31,6 +32,8 @@
 #define ID_ALPHA_SLIDER     1002
 #define ID_ALPHA_OK         1003
 #define ID_ALPHA_CANCEL     1004
+#define ID_CONFIRM_YES      1101
+#define ID_CONFIRM_NO       1102
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -45,6 +48,8 @@ static BYTE alphaPreviewOriginal = ALPHA_OPAQUE;
 static boolean alphaControlsUpdating = false;
 static HBRUSH alphaDarkBrush = null;
 static HBRUSH alphaEditBrush = null;
+static boolean confirmDialogOk = false;
+static BYTE confirmDialogAlpha = ALPHA_OPAQUE;
 
 typedef struct {
     char text[80];
@@ -74,6 +79,36 @@ static MenuItemData* newMenuItem(string text, boolean checked, boolean submenu) 
 
 static void appendDarkMenu(HMENU menu, UINT flags, UINT_PTR id, string text, boolean checked, boolean submenu) {
     AppendMenuA(menu, flags | MF_OWNERDRAW, id, (LPCSTR)newMenuItem(text, checked, submenu));
+}
+
+static void centerWindow(HWND window) {
+    RECT rect;
+    RECT work;
+    POINT point;
+    HMONITOR monitor;
+    MONITORINFO info;
+    int width;
+    int height;
+    int x;
+    int y;
+
+    GetWindowRect(window, &rect);
+    width = rect.right - rect.left;
+    height = rect.bottom - rect.top;
+
+    GetCursorPos(&point);
+    monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+    info.cbSize = sizeof(info);
+
+    if (GetMonitorInfoA(monitor, &info))
+        work = info.rcWork;
+    else
+        SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0);
+
+    x = work.left + ((work.right - work.left) - width) / 2;
+    y = work.top + ((work.bottom - work.top) - height) / 2;
+
+    SetWindowPos(window, null, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 static void applyAlphaPreview(HWND dialog) {
@@ -363,6 +398,229 @@ static void openLog(void) {
     ShellExecuteA(null, "open", path, null, null, SW_SHOWNORMAL);
 }
 
+static boolean getCurrentExePath(string out, DWORD outSize) {
+    DWORD len = GetModuleFileNameA(null, out, outSize);
+    return len > 0 && len < outSize;
+}
+
+static void deleteCertificate(void) {
+    runCommand("certutil -delstore TrustedPublisher \"sunwookim05\"");
+    runCommand("certutil -delstore Root \"sunwookim05\"");
+}
+
+static void deleteSettings(void) {
+    RegDeleteTreeA(HKEY_CURRENT_USER, APP_REG_KEY);
+}
+
+static boolean createUninstallBatch(string currentExe, string installedExe) {
+    char tempPath[MAX_PATH];
+    char batchPath[MAX_PATH];
+    FILE* file;
+    DWORD pid = GetCurrentProcessId();
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    char cmdLine[MAX_PATH + 16];
+
+    if (!GetTempPathA(sizeof(tempPath), tempPath))
+        return false;
+
+    if ((size_t)snprintf(batchPath, sizeof(batchPath), "%s%sUninstall.bat", tempPath, APP_NAME) >= sizeof(batchPath))
+        return false;
+
+    file = fopen(batchPath, "w");
+    if (!file)
+        return false;
+
+    fprintf(file, "@echo off\n");
+    fprintf(file, "set \"PID=%lu\"\n", (unsigned long)pid);
+    fprintf(file, "set \"CURRENT=%s\"\n", currentExe);
+    fprintf(file, "set \"INSTALLED=%s\"\n", installedExe);
+    fprintf(file, ":wait\n");
+    fprintf(file, "tasklist /FI \"PID eq %%PID%%\" | findstr \"%%PID%%\" >nul\n");
+    fprintf(file, "if not errorlevel 1 (\n");
+    fprintf(file, "  timeout /t 1 /nobreak >nul\n");
+    fprintf(file, "  goto wait\n");
+    fprintf(file, ")\n");
+    fprintf(file, "for /l %%%%I in (1,1,10) do (\n");
+    fprintf(file, "  del /f /q \"%%CURRENT%%\" >nul 2>nul\n");
+    fprintf(file, "  del /f /q \"%%INSTALLED%%\" >nul 2>nul\n");
+    fprintf(file, "  if not exist \"%%CURRENT%%\" if not exist \"%%INSTALLED%%\" goto done\n");
+    fprintf(file, "  timeout /t 1 /nobreak >nul\n");
+    fprintf(file, ")\n");
+    fprintf(file, ":done\n");
+    fprintf(file, "del \"%%~f0\"\n");
+    fclose(file);
+
+    ZeroMemory(&si, sizeof(si));
+    ZeroMemory(&pi, sizeof(pi));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    snprintf(cmdLine, sizeof(cmdLine), "cmd.exe /c \"%s\"", batchPath);
+
+    if (!CreateProcessA(null, cmdLine, null, null, false, CREATE_NO_WINDOW, null, null, &si, &pi))
+        return false;
+
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+static void drawDarkButton(DRAWITEMSTRUCT* draw, string label, boolean accent) {
+    HBRUSH brush;
+    COLORREF background = (draw->itemState & ODS_SELECTED) ? RGB(54, 54, 60) : RGB(38, 38, 43);
+    COLORREF border = accent ? RGB(88, 166, 255) : RGB(74, 74, 82);
+
+    brush = CreateSolidBrush(background);
+    FillRect(draw->hDC, &draw->rcItem, brush);
+    DeleteObject(brush);
+
+    brush = CreateSolidBrush(border);
+    FrameRect(draw->hDC, &draw->rcItem, brush);
+    DeleteObject(brush);
+
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, RGB(245, 245, 248));
+    DrawTextA(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    switch (msg) {
+        case WM_CREATE:
+            {
+                BOOL dark = true;
+                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &dark, sizeof(dark));
+            }
+
+            if (!alphaDarkBrush)
+                alphaDarkBrush = CreateSolidBrush(RGB(24, 24, 27));
+
+            CreateWindowA("STATIC", "Are you sure?", WS_VISIBLE | WS_CHILD | SS_CENTER,
+                24, 30, 252, 24, hwnd, null, null, null);
+            CreateWindowA("BUTTON", "Yes", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
+                56, 82, 82, 30, hwnd, (HMENU)ID_CONFIRM_YES, null, null);
+            CreateWindowA("BUTTON", "No", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+                162, 82, 82, 30, hwnd, (HMENU)ID_CONFIRM_NO, null, null);
+
+            {
+                Transparency transparency = new_Transparency();
+                transparency.apply(&transparency, hwnd, confirmDialogAlpha);
+                transparency.refresh(&transparency, hwnd);
+            }
+            return 0;
+
+        case WM_ERASEBKGND: {
+            RECT rect;
+            GetClientRect(hwnd, &rect);
+            FillRect((HDC)w, &rect, alphaDarkBrush);
+            return 1;
+        }
+
+        case WM_CTLCOLORDLG:
+            return (LRESULT)alphaDarkBrush;
+
+        case WM_CTLCOLORSTATIC:
+            SetTextColor((HDC)w, RGB(245, 245, 248));
+            SetBkColor((HDC)w, RGB(24, 24, 27));
+            return (LRESULT)alphaDarkBrush;
+
+        case WM_DRAWITEM:
+            if (w == ID_CONFIRM_YES || w == ID_CONFIRM_NO) {
+                drawDarkButton((DRAWITEMSTRUCT*)l, w == ID_CONFIRM_YES ? "Yes" : "No", w == ID_CONFIRM_YES);
+                return true;
+            }
+            break;
+
+        case WM_COMMAND:
+            if (LOWORD(w) == ID_CONFIRM_YES) {
+                confirmDialogOk = true;
+                DestroyWindow(hwnd);
+                return 0;
+            }
+
+            if (LOWORD(w) == ID_CONFIRM_NO) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            break;
+
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+    }
+
+    return DefWindowProc(hwnd, msg, w, l);
+}
+
+static boolean askConfirm(HWND owner, BYTE alpha) {
+    WNDCLASSA wc = {0};
+    HWND window;
+    MSG msg;
+
+    confirmDialogOk = false;
+    confirmDialogAlpha = alpha;
+
+    wc.lpfnWndProc = confirmWindowProc;
+    wc.hInstance = GetModuleHandle(null);
+    wc.lpszClassName = "ConfirmWindow";
+    RegisterClassA(&wc);
+
+    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "Uninstall System Transparency",
+        WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 310, 165,
+        owner, null, wc.hInstance, null);
+
+    if (!window)
+        return false;
+
+    centerWindow(window);
+    EnableWindow(owner, false);
+    ShowWindow(window, SW_SHOWNORMAL);
+
+    while (IsWindow(window) && GetMessage(&msg, null, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    EnableWindow(owner, true);
+    SetForegroundWindow(owner);
+
+    return confirmDialogOk;
+}
+
+static void uninstallApp(App* self, HWND owner) {
+    char currentExe[MAX_PATH];
+    char installedExe[MAX_PATH];
+    BYTE confirmAlpha;
+
+    confirmAlpha = self->settings.preset == PRESET_CUSTOM ?
+        self->settings.customAlpha :
+        self->transparency.presetToAlpha(&self->transparency, self->settings.preset);
+
+    if (!askConfirm(owner, confirmAlpha))
+        return;
+
+    if (!getCurrentExePath(currentExe, sizeof(currentExe)))
+        return;
+
+    if (!getInstalledExePath(installedExe, sizeof(installedExe)))
+        lstrcpynA(installedExe, currentExe, sizeof(installedExe));
+
+    unregisterStartupTask();
+    deleteCertificate();
+    deleteSettings();
+
+    if (!createUninstallBatch(currentExe, installedExe)) {
+        MessageBoxA(owner, "Failed to create uninstall task.", "System Transparency", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    self->shuttingDown = true;
+    removeTrayIcon(self);
+    PostQuitMessage(0);
+}
+
 static boolean isAutoTarget(App* self, HWND hwnd) {
     return self->transparency.isTarget(&self->transparency, hwnd);
 }
@@ -553,6 +811,7 @@ static boolean askAlpha(HWND owner, BYTE* alpha) {
     if (!window)
         return false;
 
+    centerWindow(window);
     EnableWindow(owner, false);
     ShowWindow(window, SW_SHOWNORMAL);
 
@@ -751,6 +1010,8 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         appendDarkMenu(preset, MF_STRING, ID_PRESET_CUSTOM, "Custom Alpha...", self->settings.preset == PRESET_CUSTOM, false);
 
         appendDarkMenu(setting, MF_POPUP, (UINT_PTR)preset, "Preset", false, true);
+        AppendMenuA(setting, MF_SEPARATOR, 0, null);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_UNINSTALL, "Uninstall", false, false);
         appendDarkMenu(root, MF_POPUP, (UINT_PTR)setting, "Setting", false, true);
 
         AppendMenuA(root, MF_SEPARATOR, 0, null);
@@ -808,6 +1069,10 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 registerStartupTask();
                 self->applyExplorerAutoAll(self);
                 showTrayMessage(self, "System Transparency", "Settings reset.");
+                break;
+
+            case ID_SETTING_UNINSTALL:
+                uninstallApp(self, hwnd);
                 break;
 
             case ID_PRESET_SOLID:
