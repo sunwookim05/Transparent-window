@@ -495,13 +495,13 @@ static void drawDarkButton(DRAWITEMSTRUCT* draw, string label, boolean accent) {
     DrawTextA(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-static DWORD getCurrentModifiers(void) {
+static DWORD getCurrentModifiers(App* self) {
     DWORD modifiers = 0;
 
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) modifiers |= HOTKEY_MOD_CTRL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000) modifiers |= HOTKEY_MOD_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000) modifiers |= HOTKEY_MOD_SHIFT;
-    if ((GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000)) modifiers |= HOTKEY_MOD_WIN;
+    if ((self && self->ctrlDown) || (GetAsyncKeyState(VK_CONTROL) & 0x8000)) modifiers |= HOTKEY_MOD_CTRL;
+    if ((self && self->altDown) || (GetAsyncKeyState(VK_MENU) & 0x8000)) modifiers |= HOTKEY_MOD_ALT;
+    if ((self && self->shiftDown) || (GetAsyncKeyState(VK_SHIFT) & 0x8000)) modifiers |= HOTKEY_MOD_SHIFT;
+    if ((self && self->winDown) || (GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000)) modifiers |= HOTKEY_MOD_WIN;
 
     return modifiers;
 }
@@ -1423,6 +1423,20 @@ static LRESULT CALLBACK keyboardHook(int code, WPARAM w, LPARAM l) {
         return CallNextHookEx(null, code, w, l);
     }
 
+    if (k->vkCode == VK_MENU || k->vkCode == VK_LMENU || k->vkCode == VK_RMENU) {
+        if (down) self->altDown = true;
+        else if (up) self->altDown = false;
+
+        return CallNextHookEx(null, code, w, l);
+    }
+
+    if (k->vkCode == VK_SHIFT || k->vkCode == VK_LSHIFT || k->vkCode == VK_RSHIFT) {
+        if (down) self->shiftDown = true;
+        else if (up) self->shiftDown = false;
+
+        return CallNextHookEx(null, code, w, l);
+    }
+
     if (k->vkCode == VK_LWIN || k->vkCode == VK_RWIN) {
         if (down) {
             self->winDown = true;
@@ -1466,7 +1480,7 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
     if (!self || code != HC_ACTION || self->shuttingDown)
         return CallNextHookEx(null, code, w, l);
 
-    DWORD modifiers = getCurrentModifiers();
+    DWORD modifiers = getCurrentModifiers(self);
 
     if (hotkeyRecordingAction != HOTKEY_ACTION_NONE) {
         if ((w == WM_MBUTTONDOWN && hotkeyRecordingAction != HOTKEY_ACTION_ADJUST) ||
@@ -1569,6 +1583,8 @@ App new_App(void) {
         .transparency = new_Transparency(),
         .tracker = new_Tracker(),
         .ctrlDown = false,
+        .altDown = false,
+        .shiftDown = false,
         .winDown = false,
         .winUsed = false,
         .shuttingDown = false,

@@ -4,7 +4,7 @@
 #define __INSTALLER_H
 
 #define APP_NAME "SystemTransparency"
-#define APP_VERSION "1.0.5"
+#define APP_VERSION "1.0.6"
 #define APP_REG_KEY "Software\\SystemTransparency"
 #define APP_TASK_NAME "SystemTransparency"
 #define APP_EXE_NAME "SystemTransparency.exe"

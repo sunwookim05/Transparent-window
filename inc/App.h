@@ -12,6 +12,8 @@ typedef struct APP {
     Tracker tracker;
 
     volatile boolean ctrlDown;
+    volatile boolean altDown;
+    volatile boolean shiftDown;
     volatile boolean winDown;
     volatile boolean winUsed;
     volatile boolean shuttingDown;
