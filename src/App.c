@@ -12,9 +12,11 @@
 #define WM_TRAY (WM_USER + 1)
 #define TRAY_ID 1
 #define TRAY_RETRY_TIMER_ID 100
+#define TRAY_STATUS_TIMER_ID 101
 
 #define ID_SETTING_EXPLORER  10
 #define ID_SETTING_STARTUP   11
+#define ID_SETTING_HOTKEYS   12
 #define ID_SETTING_FOLDER    13
 #define ID_SETTING_RESET     14
 #define ID_SETTING_UNINSTALL 15
@@ -34,6 +36,19 @@
 #define ID_ALPHA_CANCEL     1004
 #define ID_CONFIRM_YES      1101
 #define ID_CONFIRM_NO       1102
+#define ID_HOTKEY_APPLY_LABEL    1201
+#define ID_HOTKEY_RESTORE_LABEL  1202
+#define ID_HOTKEY_ADJUST_LABEL   1203
+#define ID_HOTKEY_APPLY_RECORD   1211
+#define ID_HOTKEY_RESTORE_RECORD 1212
+#define ID_HOTKEY_ADJUST_RECORD  1213
+#define ID_HOTKEY_OK             1221
+#define ID_HOTKEY_CANCEL         1222
+
+#define HOTKEY_ACTION_NONE    0
+#define HOTKEY_ACTION_APPLY   1
+#define HOTKEY_ACTION_RESTORE 2
+#define HOTKEY_ACTION_ADJUST  3
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -50,6 +65,13 @@ static HBRUSH alphaDarkBrush = null;
 static HBRUSH alphaEditBrush = null;
 static boolean confirmDialogOk = false;
 static BYTE confirmDialogAlpha = ALPHA_OPAQUE;
+static boolean statusMenuOpen = false;
+static HWND hotkeyDialogWindow = null;
+static DWORD hotkeyDialogApplyModifiers = HOTKEY_MOD_CTRL;
+static DWORD hotkeyDialogRestoreModifiers = HOTKEY_MOD_WIN;
+static DWORD hotkeyDialogAdjustModifiers = HOTKEY_MOD_CTRL | HOTKEY_MOD_WIN;
+static int hotkeyRecordingAction = HOTKEY_ACTION_NONE;
+static boolean hotkeyDialogOk = false;
 
 typedef struct {
     char text[80];
@@ -295,18 +317,6 @@ static void removeTrayIcon(App* self) {
     self->trayIconAdded = false;
 }
 
-static void showTrayMessage(App* self, string title, string message) {
-    NOTIFYICONDATAA data;
-    makeTrayIconData(self, &data);
-
-    data.uFlags |= NIF_INFO;
-    lstrcpynA(data.szInfoTitle, title, sizeof(data.szInfoTitle));
-    lstrcpynA(data.szInfo, message, sizeof(data.szInfo));
-    data.dwInfoFlags = NIIF_INFO;
-
-    Shell_NotifyIconA(NIM_MODIFY, &data);
-}
-
 static boolean isTrayContextMenu(LPARAM l) {
     UINT event = LOWORD(l);
     return l == WM_RBUTTONUP || l == WM_CONTEXTMENU ||
@@ -485,6 +495,245 @@ static void drawDarkButton(DRAWITEMSTRUCT* draw, string label, boolean accent) {
     DrawTextA(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
+static DWORD getCurrentModifiers(void) {
+    DWORD modifiers = 0;
+
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) modifiers |= HOTKEY_MOD_CTRL;
+    if (GetAsyncKeyState(VK_MENU) & 0x8000) modifiers |= HOTKEY_MOD_ALT;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000) modifiers |= HOTKEY_MOD_SHIFT;
+    if ((GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000)) modifiers |= HOTKEY_MOD_WIN;
+
+    return modifiers;
+}
+
+static boolean modifiersMatch(DWORD current, DWORD expected) {
+    DWORD mask = HOTKEY_MOD_CTRL | HOTKEY_MOD_ALT | HOTKEY_MOD_SHIFT | HOTKEY_MOD_WIN;
+    return expected != 0 && (current & mask) == expected;
+}
+
+static void modifiersToText(DWORD modifiers, string out, size_t outSize) {
+    out[0] = '\0';
+
+    if (modifiers & HOTKEY_MOD_CTRL) lstrcatA(out, "Ctrl + ");
+    if (modifiers & HOTKEY_MOD_ALT) lstrcatA(out, "Alt + ");
+    if (modifiers & HOTKEY_MOD_SHIFT) lstrcatA(out, "Shift + ");
+    if (modifiers & HOTKEY_MOD_WIN) lstrcatA(out, "Win + ");
+
+    if (out[0] == '\0')
+        lstrcpynA(out, "None", (int)outSize);
+    else
+        out[strlen(out) - 3] = '\0';
+}
+
+static void shortcutToText(DWORD modifiers, string action, string out, size_t outSize) {
+    char modText[96];
+    modifiersToText(modifiers, modText, sizeof(modText));
+    snprintf(out, outSize, "%s + %s", modText, action);
+}
+
+static void updateHotkeyDialogLabels(void) {
+    char text[128];
+
+    if (!hotkeyDialogWindow)
+        return;
+
+    shortcutToText(hotkeyDialogApplyModifiers, "Middle Click", text, sizeof(text));
+    SetWindowTextA(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_APPLY_LABEL), text);
+
+    shortcutToText(hotkeyDialogRestoreModifiers, "Middle Click", text, sizeof(text));
+    SetWindowTextA(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_RESTORE_LABEL), text);
+
+    shortcutToText(hotkeyDialogAdjustModifiers, "Mouse Wheel", text, sizeof(text));
+    SetWindowTextA(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_ADJUST_LABEL), text);
+}
+
+static void setHotkeyRecording(HWND hwnd, int action) {
+    char text[128];
+
+    hotkeyRecordingAction = action;
+    if (action == HOTKEY_ACTION_APPLY)
+        lstrcpynA(text, "Hold keys, then middle click...", sizeof(text));
+    else if (action == HOTKEY_ACTION_RESTORE)
+        lstrcpynA(text, "Hold keys, then middle click...", sizeof(text));
+    else if (action == HOTKEY_ACTION_ADJUST)
+        lstrcpynA(text, "Hold keys, then use mouse wheel...", sizeof(text));
+    else
+        lstrcpynA(text, "", sizeof(text));
+
+    SetWindowTextA(GetDlgItem(hwnd,
+        action == HOTKEY_ACTION_APPLY ? ID_HOTKEY_APPLY_LABEL :
+        action == HOTKEY_ACTION_RESTORE ? ID_HOTKEY_RESTORE_LABEL :
+        ID_HOTKEY_ADJUST_LABEL), text);
+}
+
+static void finishHotkeyRecording(DWORD modifiers) {
+    if (!hotkeyDialogWindow || hotkeyRecordingAction == HOTKEY_ACTION_NONE || modifiers == 0)
+        return;
+
+    if (hotkeyRecordingAction == HOTKEY_ACTION_APPLY)
+        hotkeyDialogApplyModifiers = modifiers;
+    else if (hotkeyRecordingAction == HOTKEY_ACTION_RESTORE)
+        hotkeyDialogRestoreModifiers = modifiers;
+    else if (hotkeyRecordingAction == HOTKEY_ACTION_ADJUST)
+        hotkeyDialogAdjustModifiers = modifiers;
+
+    if ((modifiers & HOTKEY_MOD_WIN) && appContext)
+        appContext->winUsed = true;
+
+    hotkeyRecordingAction = HOTKEY_ACTION_NONE;
+    updateHotkeyDialogLabels();
+}
+
+static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    switch (msg) {
+        case WM_CREATE:
+            {
+                BOOL dark = true;
+                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &dark, sizeof(dark));
+            }
+
+            if (!alphaDarkBrush)
+                alphaDarkBrush = CreateSolidBrush(RGB(24, 24, 27));
+
+            CreateWindowA("STATIC", "Apply preset", WS_VISIBLE | WS_CHILD, 22, 24, 118, 20, hwnd, null, null, null);
+            CreateWindowA("STATIC", "", WS_VISIBLE | WS_CHILD, 142, 24, 190, 20, hwnd, (HMENU)ID_HOTKEY_APPLY_LABEL, null, null);
+            CreateWindowA("BUTTON", "Record", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+                340, 18, 82, 30, hwnd, (HMENU)ID_HOTKEY_APPLY_RECORD, null, null);
+
+            CreateWindowA("STATIC", "Restore opacity", WS_VISIBLE | WS_CHILD, 22, 66, 118, 20, hwnd, null, null, null);
+            CreateWindowA("STATIC", "", WS_VISIBLE | WS_CHILD, 142, 66, 190, 20, hwnd, (HMENU)ID_HOTKEY_RESTORE_LABEL, null, null);
+            CreateWindowA("BUTTON", "Record", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+                340, 60, 82, 30, hwnd, (HMENU)ID_HOTKEY_RESTORE_RECORD, null, null);
+
+            CreateWindowA("STATIC", "Adjust opacity", WS_VISIBLE | WS_CHILD, 22, 108, 118, 20, hwnd, null, null, null);
+            CreateWindowA("STATIC", "", WS_VISIBLE | WS_CHILD, 142, 108, 190, 20, hwnd, (HMENU)ID_HOTKEY_ADJUST_LABEL, null, null);
+            CreateWindowA("BUTTON", "Record", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+                340, 102, 82, 30, hwnd, (HMENU)ID_HOTKEY_ADJUST_RECORD, null, null);
+
+            CreateWindowA("BUTTON", "OK", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
+                128, 158, 82, 30, hwnd, (HMENU)ID_HOTKEY_OK, null, null);
+            CreateWindowA("BUTTON", "Cancel", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+                230, 158, 82, 30, hwnd, (HMENU)ID_HOTKEY_CANCEL, null, null);
+
+            hotkeyDialogWindow = hwnd;
+            updateHotkeyDialogLabels();
+            return 0;
+
+        case WM_ERASEBKGND: {
+            RECT rect;
+            GetClientRect(hwnd, &rect);
+            FillRect((HDC)w, &rect, alphaDarkBrush);
+            return 1;
+        }
+
+        case WM_CTLCOLORDLG:
+            return (LRESULT)alphaDarkBrush;
+
+        case WM_CTLCOLORSTATIC:
+            SetTextColor((HDC)w, RGB(245, 245, 248));
+            SetBkColor((HDC)w, RGB(24, 24, 27));
+            return (LRESULT)alphaDarkBrush;
+
+        case WM_DRAWITEM:
+            if (w == ID_HOTKEY_APPLY_RECORD || w == ID_HOTKEY_RESTORE_RECORD || w == ID_HOTKEY_ADJUST_RECORD ||
+                w == ID_HOTKEY_OK || w == ID_HOTKEY_CANCEL) {
+                string label = "Record";
+                if (w == ID_HOTKEY_OK) label = "OK";
+                else if (w == ID_HOTKEY_CANCEL) label = "Cancel";
+                drawDarkButton((DRAWITEMSTRUCT*)l, label, w == ID_HOTKEY_OK);
+                return true;
+            }
+            break;
+
+        case WM_COMMAND:
+            if (LOWORD(w) == ID_HOTKEY_APPLY_RECORD) {
+                setHotkeyRecording(hwnd, HOTKEY_ACTION_APPLY);
+                return 0;
+            }
+            if (LOWORD(w) == ID_HOTKEY_RESTORE_RECORD) {
+                setHotkeyRecording(hwnd, HOTKEY_ACTION_RESTORE);
+                return 0;
+            }
+            if (LOWORD(w) == ID_HOTKEY_ADJUST_RECORD) {
+                setHotkeyRecording(hwnd, HOTKEY_ACTION_ADJUST);
+                return 0;
+            }
+            if (LOWORD(w) == ID_HOTKEY_OK) {
+                if (hotkeyDialogApplyModifiers == hotkeyDialogRestoreModifiers) {
+                    MessageBoxA(hwnd, "Apply preset and Restore opacity cannot use the same middle-click shortcut.",
+                        "System Transparency", MB_OK | MB_ICONWARNING);
+                    return 0;
+                }
+
+                hotkeyDialogOk = true;
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            if (LOWORD(w) == ID_HOTKEY_CANCEL) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            break;
+
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+
+        case WM_DESTROY:
+            if (hotkeyDialogWindow == hwnd)
+                hotkeyDialogWindow = null;
+            hotkeyRecordingAction = HOTKEY_ACTION_NONE;
+            return 0;
+    }
+
+    return DefWindowProc(hwnd, msg, w, l);
+}
+
+static boolean askHotkeys(HWND owner, Settings* settings) {
+    WNDCLASSA wc = {0};
+    HWND window;
+    MSG msg;
+
+    hotkeyDialogApplyModifiers = settings->applyModifiers;
+    hotkeyDialogRestoreModifiers = settings->restoreModifiers;
+    hotkeyDialogAdjustModifiers = settings->adjustModifiers;
+    hotkeyRecordingAction = HOTKEY_ACTION_NONE;
+    hotkeyDialogOk = false;
+
+    wc.lpfnWndProc = hotkeyWindowProc;
+    wc.hInstance = GetModuleHandle(null);
+    wc.lpszClassName = "HotkeySettingsWindow";
+    RegisterClassA(&wc);
+
+    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "Hotkeys",
+        WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 450, 240,
+        owner, null, wc.hInstance, null);
+
+    if (!window)
+        return false;
+
+    centerWindow(window);
+    EnableWindow(owner, false);
+    ShowWindow(window, SW_SHOWNORMAL);
+
+    while (IsWindow(window) && GetMessage(&msg, null, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    EnableWindow(owner, true);
+    SetForegroundWindow(owner);
+
+    if (hotkeyDialogOk) {
+        settings->applyModifiers = hotkeyDialogApplyModifiers;
+        settings->restoreModifiers = hotkeyDialogRestoreModifiers;
+        settings->adjustModifiers = hotkeyDialogAdjustModifiers;
+    }
+
+    return hotkeyDialogOk;
+}
+
 static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
     switch (msg) {
         case WM_CREATE:
@@ -630,6 +879,30 @@ static BYTE getCurrentAlpha(App* self) {
         return self->settings.customAlpha;
 
     return self->transparency.presetToAlpha(&self->transparency, self->settings.preset);
+}
+
+static void showStatusMenu(HWND owner, POINT point, string message) {
+    HMENU menu = CreatePopupMenu();
+    HBRUSH menuBrush = CreateSolidBrush(RGB(32, 32, 36));
+    MENUINFO menuInfo = {0};
+
+    resetMenuItems();
+
+    menuInfo.cbSize = sizeof(menuInfo);
+    menuInfo.fMask = MIM_BACKGROUND;
+    menuInfo.hbrBack = menuBrush;
+    SetMenuInfo(menu, &menuInfo);
+
+    appendDarkMenu(menu, MF_STRING | MF_DISABLED, 0, message, false, false);
+
+    statusMenuOpen = true;
+    SetTimer(owner, TRAY_STATUS_TIMER_ID, 3000, null);
+    TrackPopupMenu(menu, TPM_NONOTIFY, point.x, point.y, 0, owner, null);
+    KillTimer(owner, TRAY_STATUS_TIMER_ID);
+    statusMenuOpen = false;
+
+    DestroyMenu(menu);
+    DeleteObject(menuBrush);
 }
 
 static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
@@ -980,6 +1253,12 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         return 0;
     }
 
+    if (msg == WM_TIMER && w == TRAY_STATUS_TIMER_ID) {
+        if (statusMenuOpen)
+            EndMenu();
+        return 0;
+    }
+
     if (msg == WM_TRAY && isTrayContextMenu(l)) {
         HMENU root = CreatePopupMenu();
         HMENU setting = CreatePopupMenu();
@@ -1001,6 +1280,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
         appendDarkMenu(setting, MF_STRING, ID_SETTING_EXPLORER, "Explorer Auto Transparency", self->settings.explorerAuto, false);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_STARTUP, "Run at Startup", self->settings.startupEnabled, false);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_HOTKEYS, "Hotkeys...", false, false);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_FOLDER, "Open Install Folder", false, false);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_RESET, "Reset Settings", false, false);
         appendDarkMenu(preset, MF_STRING, ID_PRESET_SOLID, "Solid", self->settings.preset == PRESET_SOLID, false);
@@ -1024,10 +1304,12 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         appendDarkMenu(root, MF_STRING, 3, "Exit", false, false);
 
         POINT p;
+        POINT statusPoint;
         GetCursorPos(&p);
         SetForegroundWindow(hwnd);
 
         UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, null);
+        GetCursorPos(&statusPoint);
 
         switch (cmd) {
             case 1:
@@ -1056,7 +1338,11 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 else
                     unregisterStartupTask();
                 self->settings.save(&self->settings);
-                showTrayMessage(self, "System Transparency", self->settings.startupEnabled ? "Startup enabled." : "Startup disabled.");
+                break;
+
+            case ID_SETTING_HOTKEYS:
+                if (askHotkeys(hwnd, &self->settings))
+                    self->settings.save(&self->settings);
                 break;
 
             case ID_SETTING_FOLDER:
@@ -1068,7 +1354,6 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 self->settings.save(&self->settings);
                 registerStartupTask();
                 self->applyExplorerAutoAll(self);
-                showTrayMessage(self, "System Transparency", "Settings reset.");
                 break;
 
             case ID_SETTING_UNINSTALL:
@@ -1098,11 +1383,11 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 UpdateResult result = updater.checkNow(&updater);
 
                 if (result == UPDATE_CURRENT)
-                    showTrayMessage(self, "System Transparency", "Already up to date.");
+                    showStatusMenu(hwnd, statusPoint, "Already up to date.");
                 else if (result == UPDATE_FAILED)
-                    showTrayMessage(self, "System Transparency", "Update check failed. See log.");
+                    showStatusMenu(hwnd, statusPoint, "Update failed. See log.");
                 else if (result == UPDATE_SKIPPED)
-                    showTrayMessage(self, "System Transparency", "Update skipped outside install path.");
+                    showStatusMenu(hwnd, statusPoint, "Update skipped.");
                 break;
             }
 
@@ -1131,7 +1416,7 @@ static LRESULT CALLBACK keyboardHook(int code, WPARAM w, LPARAM l) {
     const boolean down = (w == WM_KEYDOWN || w == WM_SYSKEYDOWN);
     const boolean up   = (w == WM_KEYUP   || w == WM_SYSKEYUP);
 
-    if (k->vkCode == VK_CONTROL) {
+    if (k->vkCode == VK_CONTROL || k->vkCode == VK_LCONTROL || k->vkCode == VK_RCONTROL) {
         if (down) self->ctrlDown = true;
         else if (up) self->ctrlDown = false;
 
@@ -1181,10 +1466,19 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
     if (!self || code != HC_ACTION || self->shuttingDown)
         return CallNextHookEx(null, code, w, l);
 
-    boolean ctrl = self->ctrlDown || (GetAsyncKeyState(VK_CONTROL) & 0x8000);
-    boolean win  = self->winDown  || (GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000);
+    DWORD modifiers = getCurrentModifiers();
 
-    if (!ctrl && !win)
+    if (hotkeyRecordingAction != HOTKEY_ACTION_NONE) {
+        if ((w == WM_MBUTTONDOWN && hotkeyRecordingAction != HOTKEY_ACTION_ADJUST) ||
+            (w == WM_MOUSEWHEEL && hotkeyRecordingAction == HOTKEY_ACTION_ADJUST)) {
+            finishHotkeyRecording(modifiers);
+            return 1;
+        }
+
+        return CallNextHookEx(null, code, w, l);
+    }
+
+    if (modifiers == 0)
         return CallNextHookEx(null, code, w, l);
 
     MSLLHOOKSTRUCT* m = (MSLLHOOKSTRUCT*)l;
@@ -1193,22 +1487,26 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
         return CallNextHookEx(null, code, w, l);
 
     if (w == WM_MBUTTONDOWN) {
-        if (ctrl && self->transparency.apply(&self->transparency, target,
+        if (modifiersMatch(modifiers, self->settings.applyModifiers) && self->transparency.apply(&self->transparency, target,
                 getCurrentAlpha(self))) {
             self->transparency.refresh(&self->transparency, target);
+            if (self->settings.applyModifiers & HOTKEY_MOD_WIN)
+                self->winUsed = true;
             return 1;
         }
 
-        if (win && self->transparency.apply(&self->transparency, target, ALPHA_OPAQUE)) {
+        if (modifiersMatch(modifiers, self->settings.restoreModifiers) && self->transparency.apply(&self->transparency, target, ALPHA_OPAQUE)) {
             self->transparency.refresh(&self->transparency, target);
-            self->winUsed = true;
-            self->winDown = false;
+            if (self->settings.restoreModifiers & HOTKEY_MOD_WIN) {
+                self->winUsed = true;
+                self->winDown = false;
+            }
 
             return 1;
         }
     }
 
-    if (w == WM_MOUSEWHEEL && ctrl && win) {
+    if (w == WM_MOUSEWHEEL && modifiersMatch(modifiers, self->settings.adjustModifiers)) {
         int delta = GET_WHEEL_DELTA_WPARAM(m->mouseData);
         BYTE alpha = self->transparency.getWindowAlpha(&self->transparency, target);
 
@@ -1217,7 +1515,8 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
         if (self->transparency.apply(&self->transparency, target, alpha))
             self->transparency.refresh(&self->transparency, target);
 
-        self->winUsed = true;
+        if (self->settings.adjustModifiers & HOTKEY_MOD_WIN)
+            self->winUsed = true;
 
         return 1;
     }
