@@ -1,5 +1,7 @@
 # System Transparency
 
+🌍 [English](https://github.com/sunwookim05/Transparent-window/blob/main/README.md) | [한국어](https://github.com/sunwookim05/Transparent-window/blob/main/translations/ko.md)
+
 System Transparency is a lightweight Windows tray utility that makes Explorer and selected system windows feel cleaner by applying adjustable transparency in real time.
 
 It is written in C with the Win32 API. The app is distributed as a single executable: on first run it can install itself into the user profile, register the required certificate, create a highest-privilege startup task, and keep itself updated from GitHub Releases.
