@@ -95,6 +95,8 @@ gcc src\main.c src\App.c src\Installer.c src\Updater.c src\Settings.c src\Transp
 
 MIT License. [LICENSE](../LICENSE)를 참고하세요.
 
+이 프로젝트는 MIT License로 배포되는 [Object-Oriented-C-Language](https://github.com/sunwookim05/Object-Oriented-C-Language)의 소스 코드와 구조적 패턴을 일부 포함합니다.
+
 ## 제작자
 
 - GitHub: [sunwookim05](https://github.com/sunwookim05)
