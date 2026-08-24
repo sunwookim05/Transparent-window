@@ -3,6 +3,7 @@
 #include <shellapi.h>
 #include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 #include <commctrl.h>
 
 #include "App.h"
@@ -20,6 +21,7 @@
 #define ID_SETTING_FOLDER    13
 #define ID_SETTING_RESET     14
 #define ID_SETTING_UNINSTALL 15
+#define ID_SETTING_LANGUAGE  16
 
 #define ID_PRESET_SOLID     20
 #define ID_PRESET_SOFT      21
@@ -29,6 +31,10 @@
 
 #define ID_UPDATE_CHECK     30
 #define ID_LOG_OPEN         31
+
+#define ID_LANG_SYSTEM      40
+#define ID_LANG_ENGLISH     41
+#define ID_LANG_KOREAN      42
 
 #define ID_ALPHA_EDIT       1001
 #define ID_ALPHA_SLIDER     1002
@@ -74,7 +80,7 @@ static int hotkeyRecordingAction = HOTKEY_ACTION_NONE;
 static boolean hotkeyDialogOk = false;
 
 typedef struct {
-    char text[80];
+    WCHAR text[160];
     boolean checked;
     boolean submenu;
 } MenuItemData;
@@ -86,21 +92,139 @@ static void resetMenuItems(void) {
     menuItemCount = 0;
 }
 
-static MenuItemData* newMenuItem(string text, boolean checked, boolean submenu) {
+static MenuItemData* newMenuItem(const WCHAR* text, boolean checked, boolean submenu) {
     MenuItemData* item;
 
     if (menuItemCount >= 64)
         return null;
 
     item = &menuItems[menuItemCount++];
-    lstrcpynA(item->text, text, sizeof(item->text));
+    lstrcpynW(item->text, text, sizeof(item->text) / sizeof(item->text[0]));
     item->checked = checked;
     item->submenu = submenu;
     return item;
 }
 
-static void appendDarkMenu(HMENU menu, UINT flags, UINT_PTR id, string text, boolean checked, boolean submenu) {
-    AppendMenuA(menu, flags | MF_OWNERDRAW, id, (LPCSTR)newMenuItem(text, checked, submenu));
+static void appendDarkMenu(HMENU menu, UINT flags, UINT_PTR id, const WCHAR* text, boolean checked, boolean submenu) {
+    AppendMenuW(menu, flags | MF_OWNERDRAW, id, (LPCWSTR)newMenuItem(text, checked, submenu));
+}
+
+typedef enum {
+    STR_APP_NAME,
+    STR_LICENSE,
+    STR_SETTING,
+    STR_EXPLORER_AUTO,
+    STR_RUN_AT_STARTUP,
+    STR_HOTKEYS,
+    STR_LANGUAGE,
+    STR_LANGUAGE_SYSTEM,
+    STR_LANGUAGE_ENGLISH,
+    STR_LANGUAGE_KOREAN,
+    STR_OPEN_INSTALL_FOLDER,
+    STR_RESET_SETTINGS,
+    STR_UNINSTALL,
+    STR_PRESET,
+    STR_PRESET_SOLID,
+    STR_PRESET_SOFT,
+    STR_PRESET_GLASS,
+    STR_PRESET_GHOST,
+    STR_CUSTOM_ALPHA,
+    STR_CHECK_FOR_UPDATES,
+    STR_OPEN_LOG,
+    STR_DEVELOPED_BY,
+    STR_EXIT,
+    STR_ALREADY_CURRENT,
+    STR_UPDATE_FAILED,
+    STR_UPDATE_SKIPPED,
+    STR_ALPHA_VALUE,
+    STR_OK,
+    STR_CANCEL,
+    STR_ALPHA_RANGE,
+    STR_CONFIRM_TITLE,
+    STR_CONFIRM_QUESTION,
+    STR_YES,
+    STR_NO,
+    STR_UNINSTALL_FAILED,
+    STR_HOTKEY_APPLY,
+    STR_HOTKEY_RESTORE,
+    STR_HOTKEY_ADJUST,
+    STR_RECORD,
+    STR_HOLD_MIDDLE,
+    STR_HOLD_WHEEL,
+    STR_HOTKEY_CONFLICT,
+    STR_HOTKEY_LIMIT,
+    STR_MIDDLE_CLICK,
+    STR_MOUSE_WHEEL,
+    STR_NONE
+} StringId;
+
+static LanguageMode effectiveLanguage(App* self) {
+    LANGID lang;
+
+    if (self && self->settings.language != LANGUAGE_SYSTEM)
+        return self->settings.language;
+
+    lang = GetUserDefaultUILanguage();
+    return PRIMARYLANGID(lang) == LANG_KOREAN ? LANGUAGE_KOREAN : LANGUAGE_ENGLISH;
+}
+
+static const WCHAR* textFor(LanguageMode language, StringId id) {
+    boolean ko = language == LANGUAGE_KOREAN;
+
+    switch (id) {
+        case STR_APP_NAME: return L"System Transparency";
+        case STR_LICENSE: return ko ? L"MIT 라이선스" : L"Licensed under MIT";
+        case STR_SETTING: return ko ? L"설정" : L"Setting";
+        case STR_EXPLORER_AUTO: return ko ? L"Explorer 자동 투명화" : L"Explorer Auto Transparency";
+        case STR_RUN_AT_STARTUP: return ko ? L"시작 시 실행" : L"Run at Startup";
+        case STR_HOTKEYS: return ko ? L"단축키..." : L"Hotkeys...";
+        case STR_LANGUAGE: return ko ? L"언어" : L"Language";
+        case STR_LANGUAGE_SYSTEM: return ko ? L"시스템 기본값" : L"System default";
+        case STR_LANGUAGE_ENGLISH: return L"English";
+        case STR_LANGUAGE_KOREAN: return L"한국어";
+        case STR_OPEN_INSTALL_FOLDER: return ko ? L"설치 폴더 열기" : L"Open Install Folder";
+        case STR_RESET_SETTINGS: return ko ? L"설정 초기화" : L"Reset Settings";
+        case STR_UNINSTALL: return ko ? L"제거" : L"Uninstall";
+        case STR_PRESET: return ko ? L"프리셋" : L"Preset";
+        case STR_PRESET_SOLID: return ko ? L"불투명" : L"Solid";
+        case STR_PRESET_SOFT: return ko ? L"부드럽게" : L"Soft";
+        case STR_PRESET_GLASS: return ko ? L"유리" : L"Glass";
+        case STR_PRESET_GHOST: return ko ? L"희미하게" : L"Ghost";
+        case STR_CUSTOM_ALPHA: return ko ? L"사용자 지정 투명도..." : L"Custom Alpha...";
+        case STR_CHECK_FOR_UPDATES: return ko ? L"업데이트 확인" : L"Check for Updates";
+        case STR_OPEN_LOG: return ko ? L"로그 열기" : L"Open Log";
+        case STR_DEVELOPED_BY: return ko ? L"sunwookim05 제작" : L"Developed by sunwookim05";
+        case STR_EXIT: return ko ? L"종료" : L"Exit";
+        case STR_ALREADY_CURRENT: return ko ? L"최신 버전입니다." : L"Already up to date.";
+        case STR_UPDATE_FAILED: return ko ? L"업데이트 실패. 로그를 확인하세요." : L"Update failed. See log.";
+        case STR_UPDATE_SKIPPED: return ko ? L"업데이트를 건너뛰었습니다." : L"Update skipped.";
+        case STR_ALPHA_VALUE: return ko ? L"값" : L"Value";
+        case STR_OK: return ko ? L"확인" : L"OK";
+        case STR_CANCEL: return ko ? L"취소" : L"Cancel";
+        case STR_ALPHA_RANGE: return ko ? L"60에서 255 사이 값을 입력하세요." : L"Enter a value between 60 and 255.";
+        case STR_CONFIRM_TITLE: return ko ? L"System Transparency 제거" : L"Uninstall System Transparency";
+        case STR_CONFIRM_QUESTION: return ko ? L"정말 제거할까요?" : L"Are you sure?";
+        case STR_YES: return ko ? L"예" : L"Yes";
+        case STR_NO: return ko ? L"아니요" : L"No";
+        case STR_UNINSTALL_FAILED: return ko ? L"제거 작업을 만들지 못했습니다." : L"Failed to create uninstall task.";
+        case STR_HOTKEY_APPLY: return ko ? L"프리셋 적용" : L"Apply preset";
+        case STR_HOTKEY_RESTORE: return ko ? L"불투명하게 복원" : L"Restore opacity";
+        case STR_HOTKEY_ADJUST: return ko ? L"투명도 조절" : L"Adjust opacity";
+        case STR_RECORD: return ko ? L"녹화" : L"Record";
+        case STR_HOLD_MIDDLE: return ko ? L"키를 누른 채 중간 클릭..." : L"Hold keys, then middle click...";
+        case STR_HOLD_WHEEL: return ko ? L"키를 누른 채 휠 사용..." : L"Hold keys, then use mouse wheel...";
+        case STR_HOTKEY_CONFLICT: return ko ? L"프리셋 적용과 불투명 복원은 같은 중간 클릭 단축키를 사용할 수 없습니다." : L"Apply preset and Restore opacity cannot use the same middle-click shortcut.";
+        case STR_HOTKEY_LIMIT: return ko ? L"보조 키는 최대 4개까지 사용할 수 있습니다." : L"Use up to 4 modifier keys.";
+        case STR_MIDDLE_CLICK: return ko ? L"중간 클릭" : L"Middle Click";
+        case STR_MOUSE_WHEEL: return ko ? L"마우스 휠" : L"Mouse Wheel";
+        case STR_NONE: return ko ? L"없음" : L"None";
+    }
+
+    return L"";
+}
+
+static const WCHAR* tr(StringId id) {
+    return textFor(effectiveLanguage(appContext), id);
 }
 
 static void centerWindow(HWND window) {
@@ -477,7 +601,7 @@ static boolean createUninstallBatch(string currentExe, string installedExe) {
     return true;
 }
 
-static void drawDarkButton(DRAWITEMSTRUCT* draw, string label, boolean accent) {
+static void drawDarkButton(DRAWITEMSTRUCT* draw, const WCHAR* label, boolean accent) {
     HBRUSH brush;
     COLORREF background = (draw->itemState & ODS_SELECTED) ? RGB(54, 54, 60) : RGB(38, 38, 43);
     COLORREF border = accent ? RGB(88, 166, 255) : RGB(74, 74, 82);
@@ -492,7 +616,7 @@ static void drawDarkButton(DRAWITEMSTRUCT* draw, string label, boolean accent) {
 
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, RGB(245, 245, 248));
-    DrawTextA(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 static DWORD getCurrentModifiers(App* self) {
@@ -506,61 +630,72 @@ static DWORD getCurrentModifiers(App* self) {
     return modifiers;
 }
 
+static int countHotkeyModifiers(DWORD modifiers) {
+    int count = 0;
+
+    if (modifiers & HOTKEY_MOD_CTRL) count++;
+    if (modifiers & HOTKEY_MOD_ALT) count++;
+    if (modifiers & HOTKEY_MOD_SHIFT) count++;
+    if (modifiers & HOTKEY_MOD_WIN) count++;
+
+    return count;
+}
+
 static boolean modifiersMatch(DWORD current, DWORD expected) {
     DWORD mask = HOTKEY_MOD_CTRL | HOTKEY_MOD_ALT | HOTKEY_MOD_SHIFT | HOTKEY_MOD_WIN;
     return expected != 0 && (current & mask) == expected;
 }
 
-static void modifiersToText(DWORD modifiers, string out, size_t outSize) {
+static void modifiersToText(DWORD modifiers, WCHAR* out, size_t outSize) {
     out[0] = '\0';
 
-    if (modifiers & HOTKEY_MOD_CTRL) lstrcatA(out, "Ctrl + ");
-    if (modifiers & HOTKEY_MOD_ALT) lstrcatA(out, "Alt + ");
-    if (modifiers & HOTKEY_MOD_SHIFT) lstrcatA(out, "Shift + ");
-    if (modifiers & HOTKEY_MOD_WIN) lstrcatA(out, "Win + ");
+    if (modifiers & HOTKEY_MOD_CTRL) lstrcatW(out, L"Ctrl + ");
+    if (modifiers & HOTKEY_MOD_ALT) lstrcatW(out, L"Alt + ");
+    if (modifiers & HOTKEY_MOD_SHIFT) lstrcatW(out, L"Shift + ");
+    if (modifiers & HOTKEY_MOD_WIN) lstrcatW(out, L"Win + ");
 
     if (out[0] == '\0')
-        lstrcpynA(out, "None", (int)outSize);
+        lstrcpynW(out, tr(STR_NONE), (int)outSize);
     else
-        out[strlen(out) - 3] = '\0';
+        out[wcslen(out) - 3] = '\0';
 }
 
-static void shortcutToText(DWORD modifiers, string action, string out, size_t outSize) {
-    char modText[96];
-    modifiersToText(modifiers, modText, sizeof(modText));
-    snprintf(out, outSize, "%s + %s", modText, action);
+static void shortcutToText(DWORD modifiers, const WCHAR* action, WCHAR* out, size_t outSize) {
+    WCHAR modText[96];
+    modifiersToText(modifiers, modText, sizeof(modText) / sizeof(modText[0]));
+    swprintf(out, outSize, L"%s + %s", modText, action);
 }
 
 static void updateHotkeyDialogLabels(void) {
-    char text[128];
+    WCHAR text[128];
 
     if (!hotkeyDialogWindow)
         return;
 
-    shortcutToText(hotkeyDialogApplyModifiers, "Middle Click", text, sizeof(text));
-    SetWindowTextA(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_APPLY_LABEL), text);
+    shortcutToText(hotkeyDialogApplyModifiers, tr(STR_MIDDLE_CLICK), text, sizeof(text) / sizeof(text[0]));
+    SetWindowTextW(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_APPLY_LABEL), text);
 
-    shortcutToText(hotkeyDialogRestoreModifiers, "Middle Click", text, sizeof(text));
-    SetWindowTextA(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_RESTORE_LABEL), text);
+    shortcutToText(hotkeyDialogRestoreModifiers, tr(STR_MIDDLE_CLICK), text, sizeof(text) / sizeof(text[0]));
+    SetWindowTextW(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_RESTORE_LABEL), text);
 
-    shortcutToText(hotkeyDialogAdjustModifiers, "Mouse Wheel", text, sizeof(text));
-    SetWindowTextA(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_ADJUST_LABEL), text);
+    shortcutToText(hotkeyDialogAdjustModifiers, tr(STR_MOUSE_WHEEL), text, sizeof(text) / sizeof(text[0]));
+    SetWindowTextW(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_ADJUST_LABEL), text);
 }
 
 static void setHotkeyRecording(HWND hwnd, int action) {
-    char text[128];
+    const WCHAR* text;
 
     hotkeyRecordingAction = action;
     if (action == HOTKEY_ACTION_APPLY)
-        lstrcpynA(text, "Hold keys, then middle click...", sizeof(text));
+        text = tr(STR_HOLD_MIDDLE);
     else if (action == HOTKEY_ACTION_RESTORE)
-        lstrcpynA(text, "Hold keys, then middle click...", sizeof(text));
+        text = tr(STR_HOLD_MIDDLE);
     else if (action == HOTKEY_ACTION_ADJUST)
-        lstrcpynA(text, "Hold keys, then use mouse wheel...", sizeof(text));
+        text = tr(STR_HOLD_WHEEL);
     else
-        lstrcpynA(text, "", sizeof(text));
+        text = L"";
 
-    SetWindowTextA(GetDlgItem(hwnd,
+    SetWindowTextW(GetDlgItem(hwnd,
         action == HOTKEY_ACTION_APPLY ? ID_HOTKEY_APPLY_LABEL :
         action == HOTKEY_ACTION_RESTORE ? ID_HOTKEY_RESTORE_LABEL :
         ID_HOTKEY_ADJUST_LABEL), text);
@@ -569,6 +704,11 @@ static void setHotkeyRecording(HWND hwnd, int action) {
 static void finishHotkeyRecording(DWORD modifiers) {
     if (!hotkeyDialogWindow || hotkeyRecordingAction == HOTKEY_ACTION_NONE || modifiers == 0)
         return;
+
+    if (countHotkeyModifiers(modifiers) > HOTKEY_MAX_MODIFIERS) {
+        MessageBoxW(hotkeyDialogWindow, tr(STR_HOTKEY_LIMIT), tr(STR_APP_NAME), MB_OK | MB_ICONWARNING);
+        return;
+    }
 
     if (hotkeyRecordingAction == HOTKEY_ACTION_APPLY)
         hotkeyDialogApplyModifiers = modifiers;
@@ -596,24 +736,24 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
             if (!alphaDarkBrush)
                 alphaDarkBrush = CreateSolidBrush(RGB(24, 24, 27));
 
-            CreateWindowA("STATIC", "Apply preset", WS_VISIBLE | WS_CHILD, 22, 24, 118, 20, hwnd, null, null, null);
-            CreateWindowA("STATIC", "", WS_VISIBLE | WS_CHILD, 142, 24, 190, 20, hwnd, (HMENU)ID_HOTKEY_APPLY_LABEL, null, null);
-            CreateWindowA("BUTTON", "Record", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+            CreateWindowW(L"STATIC", tr(STR_HOTKEY_APPLY), WS_VISIBLE | WS_CHILD, 22, 24, 118, 20, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", L"", WS_VISIBLE | WS_CHILD, 142, 24, 190, 20, hwnd, (HMENU)ID_HOTKEY_APPLY_LABEL, null, null);
+            CreateWindowW(L"BUTTON", tr(STR_RECORD), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
                 340, 18, 82, 30, hwnd, (HMENU)ID_HOTKEY_APPLY_RECORD, null, null);
 
-            CreateWindowA("STATIC", "Restore opacity", WS_VISIBLE | WS_CHILD, 22, 66, 118, 20, hwnd, null, null, null);
-            CreateWindowA("STATIC", "", WS_VISIBLE | WS_CHILD, 142, 66, 190, 20, hwnd, (HMENU)ID_HOTKEY_RESTORE_LABEL, null, null);
-            CreateWindowA("BUTTON", "Record", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+            CreateWindowW(L"STATIC", tr(STR_HOTKEY_RESTORE), WS_VISIBLE | WS_CHILD, 22, 66, 118, 20, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", L"", WS_VISIBLE | WS_CHILD, 142, 66, 190, 20, hwnd, (HMENU)ID_HOTKEY_RESTORE_LABEL, null, null);
+            CreateWindowW(L"BUTTON", tr(STR_RECORD), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
                 340, 60, 82, 30, hwnd, (HMENU)ID_HOTKEY_RESTORE_RECORD, null, null);
 
-            CreateWindowA("STATIC", "Adjust opacity", WS_VISIBLE | WS_CHILD, 22, 108, 118, 20, hwnd, null, null, null);
-            CreateWindowA("STATIC", "", WS_VISIBLE | WS_CHILD, 142, 108, 190, 20, hwnd, (HMENU)ID_HOTKEY_ADJUST_LABEL, null, null);
-            CreateWindowA("BUTTON", "Record", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+            CreateWindowW(L"STATIC", tr(STR_HOTKEY_ADJUST), WS_VISIBLE | WS_CHILD, 22, 108, 118, 20, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", L"", WS_VISIBLE | WS_CHILD, 142, 108, 190, 20, hwnd, (HMENU)ID_HOTKEY_ADJUST_LABEL, null, null);
+            CreateWindowW(L"BUTTON", tr(STR_RECORD), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
                 340, 102, 82, 30, hwnd, (HMENU)ID_HOTKEY_ADJUST_RECORD, null, null);
 
-            CreateWindowA("BUTTON", "OK", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
+            CreateWindowW(L"BUTTON", tr(STR_OK), WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
                 128, 158, 82, 30, hwnd, (HMENU)ID_HOTKEY_OK, null, null);
-            CreateWindowA("BUTTON", "Cancel", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+            CreateWindowW(L"BUTTON", tr(STR_CANCEL), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
                 230, 158, 82, 30, hwnd, (HMENU)ID_HOTKEY_CANCEL, null, null);
 
             hotkeyDialogWindow = hwnd;
@@ -638,9 +778,9 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
         case WM_DRAWITEM:
             if (w == ID_HOTKEY_APPLY_RECORD || w == ID_HOTKEY_RESTORE_RECORD || w == ID_HOTKEY_ADJUST_RECORD ||
                 w == ID_HOTKEY_OK || w == ID_HOTKEY_CANCEL) {
-                string label = "Record";
-                if (w == ID_HOTKEY_OK) label = "OK";
-                else if (w == ID_HOTKEY_CANCEL) label = "Cancel";
+                const WCHAR* label = tr(STR_RECORD);
+                if (w == ID_HOTKEY_OK) label = tr(STR_OK);
+                else if (w == ID_HOTKEY_CANCEL) label = tr(STR_CANCEL);
                 drawDarkButton((DRAWITEMSTRUCT*)l, label, w == ID_HOTKEY_OK);
                 return true;
             }
@@ -661,8 +801,7 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
             }
             if (LOWORD(w) == ID_HOTKEY_OK) {
                 if (hotkeyDialogApplyModifiers == hotkeyDialogRestoreModifiers) {
-                    MessageBoxA(hwnd, "Apply preset and Restore opacity cannot use the same middle-click shortcut.",
-                        "System Transparency", MB_OK | MB_ICONWARNING);
+                    MessageBoxW(hwnd, tr(STR_HOTKEY_CONFLICT), tr(STR_APP_NAME), MB_OK | MB_ICONWARNING);
                     return 0;
                 }
 
@@ -706,7 +845,7 @@ static boolean askHotkeys(HWND owner, Settings* settings) {
     wc.lpszClassName = "HotkeySettingsWindow";
     RegisterClassA(&wc);
 
-    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "Hotkeys",
+    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
         WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 450, 240,
         owner, null, wc.hInstance, null);
 
@@ -714,6 +853,7 @@ static boolean askHotkeys(HWND owner, Settings* settings) {
         return false;
 
     centerWindow(window);
+    SetWindowTextW(window, tr(STR_HOTKEYS));
     EnableWindow(owner, false);
     ShowWindow(window, SW_SHOWNORMAL);
 
@@ -746,11 +886,11 @@ static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM 
             if (!alphaDarkBrush)
                 alphaDarkBrush = CreateSolidBrush(RGB(24, 24, 27));
 
-            CreateWindowA("STATIC", "Are you sure?", WS_VISIBLE | WS_CHILD | SS_CENTER,
+            CreateWindowW(L"STATIC", tr(STR_CONFIRM_QUESTION), WS_VISIBLE | WS_CHILD | SS_CENTER,
                 24, 30, 252, 24, hwnd, null, null, null);
-            CreateWindowA("BUTTON", "Yes", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
+            CreateWindowW(L"BUTTON", tr(STR_YES), WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
                 56, 82, 82, 30, hwnd, (HMENU)ID_CONFIRM_YES, null, null);
-            CreateWindowA("BUTTON", "No", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+            CreateWindowW(L"BUTTON", tr(STR_NO), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
                 162, 82, 82, 30, hwnd, (HMENU)ID_CONFIRM_NO, null, null);
 
             {
@@ -777,7 +917,7 @@ static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM 
 
         case WM_DRAWITEM:
             if (w == ID_CONFIRM_YES || w == ID_CONFIRM_NO) {
-                drawDarkButton((DRAWITEMSTRUCT*)l, w == ID_CONFIRM_YES ? "Yes" : "No", w == ID_CONFIRM_YES);
+                drawDarkButton((DRAWITEMSTRUCT*)l, w == ID_CONFIRM_YES ? tr(STR_YES) : tr(STR_NO), w == ID_CONFIRM_YES);
                 return true;
             }
             break;
@@ -816,7 +956,7 @@ static boolean askConfirm(HWND owner, BYTE alpha) {
     wc.lpszClassName = "ConfirmWindow";
     RegisterClassA(&wc);
 
-    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "Uninstall System Transparency",
+    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
         WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 310, 165,
         owner, null, wc.hInstance, null);
 
@@ -824,6 +964,7 @@ static boolean askConfirm(HWND owner, BYTE alpha) {
         return false;
 
     centerWindow(window);
+    SetWindowTextW(window, tr(STR_CONFIRM_TITLE));
     EnableWindow(owner, false);
     ShowWindow(window, SW_SHOWNORMAL);
 
@@ -861,7 +1002,7 @@ static void uninstallApp(App* self, HWND owner) {
     deleteSettings();
 
     if (!createUninstallBatch(currentExe, installedExe)) {
-        MessageBoxA(owner, "Failed to create uninstall task.", "System Transparency", MB_OK | MB_ICONERROR);
+        MessageBoxW(owner, tr(STR_UNINSTALL_FAILED), tr(STR_APP_NAME), MB_OK | MB_ICONERROR);
         return;
     }
 
@@ -881,7 +1022,7 @@ static BYTE getCurrentAlpha(App* self) {
     return self->transparency.presetToAlpha(&self->transparency, self->settings.preset);
 }
 
-static void showStatusMenu(HWND owner, POINT point, string message) {
+static void showStatusMenu(HWND owner, POINT point, const WCHAR* message) {
     HMENU menu = CreatePopupMenu();
     HBRUSH menuBrush = CreateSolidBrush(RGB(32, 32, 36));
     MENUINFO menuInfo = {0};
@@ -924,23 +1065,23 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
             if (!alphaEditBrush)
                 alphaEditBrush = CreateSolidBrush(RGB(38, 38, 43));
 
-            CreateWindowA("STATIC", "Custom Alpha", WS_VISIBLE | WS_CHILD, 18, 14, 120, 20, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", tr(STR_CUSTOM_ALPHA), WS_VISIBLE | WS_CHILD, 18, 14, 150, 20, hwnd, null, null, null);
 
             slider = CreateWindowExA(0, "STATIC", "", WS_VISIBLE | WS_CHILD | SS_NOTIFY,
                 20, 48, 300, 34, hwnd, (HMENU)ID_ALPHA_SLIDER, null, null);
             SetWindowSubclass(slider, alphaSliderProc, 1, 0);
 
-            CreateWindowA("STATIC", "60", WS_VISIBLE | WS_CHILD, 22, 82, 32, 18, hwnd, null, null, null);
-            CreateWindowA("STATIC", "255", WS_VISIBLE | WS_CHILD | SS_RIGHT, 286, 82, 32, 18, hwnd, null, null, null);
-            CreateWindowA("STATIC", "Value", WS_VISIBLE | WS_CHILD, 94, 112, 42, 20, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", L"60", WS_VISIBLE | WS_CHILD, 22, 82, 32, 18, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", L"255", WS_VISIBLE | WS_CHILD | SS_RIGHT, 286, 82, 32, 18, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", tr(STR_ALPHA_VALUE), WS_VISIBLE | WS_CHILD, 94, 112, 42, 20, hwnd, null, null, null);
             edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_VISIBLE | WS_CHILD | ES_NUMBER,
                 144, 108, 70, 24, hwnd, (HMENU)ID_ALPHA_EDIT, null, null);
             snprintf(text, sizeof(text), "%u", alphaDialogValue);
             SetWindowTextA(edit, text);
 
-            CreateWindowA("BUTTON", "OK", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
+            CreateWindowW(L"BUTTON", tr(STR_OK), WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
                 82, 150, 82, 28, hwnd, (HMENU)ID_ALPHA_OK, null, null);
-            CreateWindowA("BUTTON", "Cancel", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+            CreateWindowW(L"BUTTON", tr(STR_CANCEL), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
                 178, 150, 82, 28, hwnd, (HMENU)ID_ALPHA_CANCEL, null, null);
 
             applyAlphaPreview(hwnd);
@@ -974,7 +1115,7 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
                 HBRUSH brush;
                 COLORREF background = (draw->itemState & ODS_SELECTED) ? RGB(54, 54, 60) : RGB(38, 38, 43);
                 COLORREF border = (w == ID_ALPHA_OK) ? RGB(88, 166, 255) : RGB(74, 74, 82);
-                string label = (w == ID_ALPHA_OK) ? "OK" : "Cancel";
+                const WCHAR* label = (w == ID_ALPHA_OK) ? tr(STR_OK) : tr(STR_CANCEL);
 
                 brush = CreateSolidBrush(background);
                 FillRect(draw->hDC, &draw->rcItem, brush);
@@ -986,7 +1127,7 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
 
                 SetBkMode(draw->hDC, TRANSPARENT);
                 SetTextColor(draw->hDC, RGB(245, 245, 248));
-                DrawTextA(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 return true;
             }
             break;
@@ -1008,7 +1149,7 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
                 GetWindowTextA(GetDlgItem(hwnd, ID_ALPHA_EDIT), text, sizeof(text));
                 value = atoi(text);
                 if (value < 60 || value > 255) {
-                    MessageBoxA(hwnd, "Enter a value between 60 and 255.", "System Transparency", MB_OK | MB_ICONWARNING);
+                    MessageBoxW(hwnd, tr(STR_ALPHA_RANGE), tr(STR_APP_NAME), MB_OK | MB_ICONWARNING);
                     return 0;
                 }
 
@@ -1077,7 +1218,7 @@ static boolean askAlpha(HWND owner, BYTE* alpha) {
     wc.lpszClassName = "AlphaInputWindow";
     RegisterClassA(&wc);
 
-    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "Custom Alpha",
+    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
         WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 350, 230,
         owner, null, wc.hInstance, null);
 
@@ -1085,6 +1226,7 @@ static boolean askAlpha(HWND owner, BYTE* alpha) {
         return false;
 
     centerWindow(window);
+    SetWindowTextW(window, tr(STR_CUSTOM_ALPHA));
     EnableWindow(owner, false);
     ShowWindow(window, SW_SHOWNORMAL);
 
@@ -1194,7 +1336,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
         if (measure->CtlType == ODT_MENU && item) {
             HDC dc = GetDC(hwnd);
-            GetTextExtentPoint32A(dc, item->text, (int)strlen(item->text), &size);
+            GetTextExtentPoint32W(dc, item->text, (int)wcslen(item->text), &size);
             ReleaseDC(hwnd, dc);
 
             measure->itemWidth = size.cx + 52;
@@ -1219,7 +1361,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
             textRect = draw->rcItem;
             textRect.left += 28;
             textRect.right -= 20;
-            DrawTextA(draw->hDC, item->text, -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+            DrawTextW(draw->hDC, item->text, -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
 
             if (item->checked) {
                 RECT checkRect = draw->rcItem;
@@ -1235,7 +1377,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
             if (item->submenu) {
                 RECT arrowRect = draw->rcItem;
                 arrowRect.left = arrowRect.right - 18;
-                DrawTextA(draw->hDC, ">", -1, &arrowRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                DrawTextW(draw->hDC, L">", -1, &arrowRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
             }
 
             return true;
@@ -1263,8 +1405,10 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         HMENU root = CreatePopupMenu();
         HMENU setting = CreatePopupMenu();
         HMENU preset  = CreatePopupMenu();
+        HMENU language = CreatePopupMenu();
         HBRUSH menuBrush = CreateSolidBrush(RGB(32, 32, 36));
         MENUINFO menuInfo = {0};
+        LanguageMode displayLanguage = effectiveLanguage(self);
         resetMenuItems();
 
         menuInfo.cbSize = sizeof(menuInfo);
@@ -1273,35 +1417,41 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         SetMenuInfo(root, &menuInfo);
         SetMenuInfo(setting, &menuInfo);
         SetMenuInfo(preset, &menuInfo);
+        SetMenuInfo(language, &menuInfo);
 
-        appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, "System Transparency", false, false);
-        appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, "Licensed under MIT", false, false);
-        AppendMenuA(root, MF_SEPARATOR, 0, null);
+        appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, tr(STR_APP_NAME), false, false);
+        appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, tr(STR_LICENSE), false, false);
+        AppendMenuW(root, MF_SEPARATOR, 0, null);
 
-        appendDarkMenu(setting, MF_STRING, ID_SETTING_EXPLORER, "Explorer Auto Transparency", self->settings.explorerAuto, false);
-        appendDarkMenu(setting, MF_STRING, ID_SETTING_STARTUP, "Run at Startup", self->settings.startupEnabled, false);
-        appendDarkMenu(setting, MF_STRING, ID_SETTING_HOTKEYS, "Hotkeys...", false, false);
-        appendDarkMenu(setting, MF_STRING, ID_SETTING_FOLDER, "Open Install Folder", false, false);
-        appendDarkMenu(setting, MF_STRING, ID_SETTING_RESET, "Reset Settings", false, false);
-        appendDarkMenu(preset, MF_STRING, ID_PRESET_SOLID, "Solid", self->settings.preset == PRESET_SOLID, false);
-        appendDarkMenu(preset, MF_STRING, ID_PRESET_SOFT, "Soft", self->settings.preset == PRESET_SOFT, false);
-        appendDarkMenu(preset, MF_STRING, ID_PRESET_GLASS, "Glass", self->settings.preset == PRESET_GLASS, false);
-        appendDarkMenu(preset, MF_STRING, ID_PRESET_GHOST, "Ghost", self->settings.preset == PRESET_GHOST, false);
-        appendDarkMenu(preset, MF_STRING, ID_PRESET_CUSTOM, "Custom Alpha...", self->settings.preset == PRESET_CUSTOM, false);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_EXPLORER, tr(STR_EXPLORER_AUTO), self->settings.explorerAuto, false);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_STARTUP, tr(STR_RUN_AT_STARTUP), self->settings.startupEnabled, false);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_HOTKEYS, tr(STR_HOTKEYS), false, false);
+        (void)displayLanguage;
+        appendDarkMenu(language, MF_STRING, ID_LANG_SYSTEM, tr(STR_LANGUAGE_SYSTEM), self->settings.language == LANGUAGE_SYSTEM, false);
+        appendDarkMenu(language, MF_STRING, ID_LANG_ENGLISH, tr(STR_LANGUAGE_ENGLISH), self->settings.language == LANGUAGE_ENGLISH, false);
+        appendDarkMenu(language, MF_STRING, ID_LANG_KOREAN, tr(STR_LANGUAGE_KOREAN), self->settings.language == LANGUAGE_KOREAN, false);
+        appendDarkMenu(setting, MF_POPUP, (UINT_PTR)language, tr(STR_LANGUAGE), false, true);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_FOLDER, tr(STR_OPEN_INSTALL_FOLDER), false, false);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_RESET, tr(STR_RESET_SETTINGS), false, false);
+        appendDarkMenu(preset, MF_STRING, ID_PRESET_SOLID, tr(STR_PRESET_SOLID), self->settings.preset == PRESET_SOLID, false);
+        appendDarkMenu(preset, MF_STRING, ID_PRESET_SOFT, tr(STR_PRESET_SOFT), self->settings.preset == PRESET_SOFT, false);
+        appendDarkMenu(preset, MF_STRING, ID_PRESET_GLASS, tr(STR_PRESET_GLASS), self->settings.preset == PRESET_GLASS, false);
+        appendDarkMenu(preset, MF_STRING, ID_PRESET_GHOST, tr(STR_PRESET_GHOST), self->settings.preset == PRESET_GHOST, false);
+        appendDarkMenu(preset, MF_STRING, ID_PRESET_CUSTOM, tr(STR_CUSTOM_ALPHA), self->settings.preset == PRESET_CUSTOM, false);
 
-        appendDarkMenu(setting, MF_POPUP, (UINT_PTR)preset, "Preset", false, true);
-        AppendMenuA(setting, MF_SEPARATOR, 0, null);
-        appendDarkMenu(setting, MF_STRING, ID_SETTING_UNINSTALL, "Uninstall", false, false);
-        appendDarkMenu(root, MF_POPUP, (UINT_PTR)setting, "Setting", false, true);
+        appendDarkMenu(setting, MF_POPUP, (UINT_PTR)preset, tr(STR_PRESET), false, true);
+        AppendMenuW(setting, MF_SEPARATOR, 0, null);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_UNINSTALL, tr(STR_UNINSTALL), false, false);
+        appendDarkMenu(root, MF_POPUP, (UINT_PTR)setting, tr(STR_SETTING), false, true);
 
-        AppendMenuA(root, MF_SEPARATOR, 0, null);
-        appendDarkMenu(root, MF_STRING, ID_UPDATE_CHECK, "Check for Updates", false, false);
-        appendDarkMenu(root, MF_STRING, ID_LOG_OPEN, "Open Log", false, false);
-        AppendMenuA(root, MF_SEPARATOR, 0, null);
-        appendDarkMenu(root, MF_STRING | MF_DISABLED, 1, "Developed by sunwookim05", false, false);
-        appendDarkMenu(root, MF_STRING, 2, "GitHub", false, false);
-        AppendMenuA(root, MF_SEPARATOR, 0, null);
-        appendDarkMenu(root, MF_STRING, 3, "Exit", false, false);
+        AppendMenuW(root, MF_SEPARATOR, 0, null);
+        appendDarkMenu(root, MF_STRING, ID_UPDATE_CHECK, tr(STR_CHECK_FOR_UPDATES), false, false);
+        appendDarkMenu(root, MF_STRING, ID_LOG_OPEN, tr(STR_OPEN_LOG), false, false);
+        AppendMenuW(root, MF_SEPARATOR, 0, null);
+        appendDarkMenu(root, MF_STRING | MF_DISABLED, 1, tr(STR_DEVELOPED_BY), false, false);
+        appendDarkMenu(root, MF_STRING, 2, L"GitHub", false, false);
+        AppendMenuW(root, MF_SEPARATOR, 0, null);
+        appendDarkMenu(root, MF_STRING, 3, tr(STR_EXIT), false, false);
 
         POINT p;
         POINT statusPoint;
@@ -1345,6 +1495,13 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                     self->settings.save(&self->settings);
                 break;
 
+            case ID_LANG_SYSTEM:
+            case ID_LANG_ENGLISH:
+            case ID_LANG_KOREAN:
+                self->settings.language = (LanguageMode)(cmd - ID_LANG_SYSTEM);
+                self->settings.save(&self->settings);
+                break;
+
             case ID_SETTING_FOLDER:
                 openInstallFolder();
                 break;
@@ -1383,11 +1540,11 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 UpdateResult result = updater.checkNow(&updater);
 
                 if (result == UPDATE_CURRENT)
-                    showStatusMenu(hwnd, statusPoint, "Already up to date.");
+                    showStatusMenu(hwnd, statusPoint, tr(STR_ALREADY_CURRENT));
                 else if (result == UPDATE_FAILED)
-                    showStatusMenu(hwnd, statusPoint, "Update failed. See log.");
+                    showStatusMenu(hwnd, statusPoint, tr(STR_UPDATE_FAILED));
                 else if (result == UPDATE_SKIPPED)
-                    showStatusMenu(hwnd, statusPoint, "Update skipped.");
+                    showStatusMenu(hwnd, statusPoint, tr(STR_UPDATE_SKIPPED));
                 break;
             }
 

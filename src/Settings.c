@@ -11,10 +11,28 @@ static void reset(Settings* self) {
     self->applyModifiers = HOTKEY_MOD_CTRL;
     self->restoreModifiers = HOTKEY_MOD_WIN;
     self->adjustModifiers = HOTKEY_MOD_CTRL | HOTKEY_MOD_WIN;
+    self->language = LANGUAGE_SYSTEM;
+}
+
+static int countModifiers(DWORD modifiers) {
+    int count = 0;
+
+    if (modifiers & HOTKEY_MOD_CTRL) count++;
+    if (modifiers & HOTKEY_MOD_ALT) count++;
+    if (modifiers & HOTKEY_MOD_SHIFT) count++;
+    if (modifiers & HOTKEY_MOD_WIN) count++;
+
+    return count;
 }
 
 static boolean validModifiers(DWORD modifiers) {
-    return modifiers > 0 && (modifiers & ~(HOTKEY_MOD_CTRL | HOTKEY_MOD_ALT | HOTKEY_MOD_SHIFT | HOTKEY_MOD_WIN)) == 0;
+    return modifiers > 0 &&
+        (modifiers & ~(HOTKEY_MOD_CTRL | HOTKEY_MOD_ALT | HOTKEY_MOD_SHIFT | HOTKEY_MOD_WIN)) == 0 &&
+        countModifiers(modifiers) <= HOTKEY_MAX_MODIFIERS;
+}
+
+static boolean validLanguage(DWORD language) {
+    return language <= LANGUAGE_KOREAN;
 }
 
 static void load(Settings* self) {
@@ -52,6 +70,10 @@ static void load(Settings* self) {
     if (RegQueryValueExA(key, "AdjustModifiers", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS && validModifiers(val))
         self->adjustModifiers = val;
 
+    size = sizeof(DWORD);
+    if (RegQueryValueExA(key, "Language", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS && validLanguage(val))
+        self->language = (LanguageMode)val;
+
     RegCloseKey(key);
 }
 
@@ -68,6 +90,7 @@ static void save(Settings* self) {
     DWORD applyModifiers = self->applyModifiers;
     DWORD restoreModifiers = self->restoreModifiers;
     DWORD adjustModifiers = self->adjustModifiers;
+    DWORD language = self->language;
 
     RegSetValueExA(key, "ExplorerAuto", 0, REG_DWORD, (BYTE*)&explorer, sizeof(DWORD));
     RegSetValueExA(key, "StartupEnabled", 0, REG_DWORD, (BYTE*)&startup, sizeof(DWORD));
@@ -76,6 +99,7 @@ static void save(Settings* self) {
     RegSetValueExA(key, "ApplyModifiers", 0, REG_DWORD, (BYTE*)&applyModifiers, sizeof(DWORD));
     RegSetValueExA(key, "RestoreModifiers", 0, REG_DWORD, (BYTE*)&restoreModifiers, sizeof(DWORD));
     RegSetValueExA(key, "AdjustModifiers", 0, REG_DWORD, (BYTE*)&adjustModifiers, sizeof(DWORD));
+    RegSetValueExA(key, "Language", 0, REG_DWORD, (BYTE*)&language, sizeof(DWORD));
     RegCloseKey(key);
 }
 

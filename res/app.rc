@@ -9,8 +9,8 @@ IDI_TRAY_ICON ICON "trayicon.ico"
 IDR_CERT RCDATA "../cert/sunwookim05.cer"
 
 1 VERSIONINFO
-FILEVERSION 1,0,6,0
-PRODUCTVERSION 1,0,6,0
+FILEVERSION 1,1,0,0
+PRODUCTVERSION 1,1,0,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -23,11 +23,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "sunwookim05"
             VALUE "FileDescription", "System Transparency"
-            VALUE "FileVersion", "1.0.6"
+            VALUE "FileVersion", "1.1.0"
             VALUE "InternalName", "SystemTransparency"
             VALUE "OriginalFilename", "SystemTransparency.exe"
             VALUE "ProductName", "System Transparency"
-            VALUE "ProductVersion", "1.0.6"
+            VALUE "ProductVersion", "1.1.0"
         END
     END
     BLOCK "VarFileInfo"

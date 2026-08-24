@@ -20,6 +20,7 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - default `Win + Middle Click`: restore the active window to full opacity.
   - default `Ctrl + Win + Mouse Wheel`: adjust the active window opacity step by step.
 - Tray menu with dark owner-drawn styling.
+- English and Korean UI language support.
 - Transparency presets:
   - `Solid`: 255
   - `Soft`: 200
@@ -60,6 +61,7 @@ Right-click the tray icon to open the menu.
 - `Setting > Explorer Auto Transparency`: enable or disable automatic transparency for supported Explorer windows.
 - `Setting > Run at Startup`: enable or disable the startup scheduled task.
 - `Setting > Hotkeys...`: record the modifier keys used for the manual transparency shortcuts.
+- `Setting > Language`: choose System default, English, or Korean.
 - `Setting > Preset`: choose the transparency level used by automatic mode and the apply-preset shortcut.
 - `Setting > Preset > Custom Alpha...`: choose a custom opacity value from 60 to 255.
 - `Setting > Uninstall`: remove the installed executable, startup task, app registry settings, and bundled certificate registration.

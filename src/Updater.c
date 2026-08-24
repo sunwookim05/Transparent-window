@@ -8,7 +8,7 @@
 
 #define UPDATE_API_HOST L"api.github.com"
 #define UPDATE_API_PATH L"/repos/sunwookim05/Transparent-window/releases/latest"
-#define UPDATE_USER_AGENT L"SystemTransparency/1.0.6"
+#define UPDATE_USER_AGENT L"SystemTransparency/1.1.0"
 
 typedef struct {
     string data;
