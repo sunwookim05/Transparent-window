@@ -23,6 +23,7 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - default `Ctrl + Win + Mouse Wheel`: adjust the active window opacity step by step.
 - Dark owner-drawn tray menu with compact popup panels for common settings.
 - Optional popup/context menu transparency, enabled by default.
+- The app's own tray menu and submenus follow the selected opacity even when external popup transparency is disabled.
 - English and Korean UI language support.
 - Transparency presets:
   - `Solid`: 255

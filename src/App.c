@@ -738,6 +738,12 @@ static boolean isAutoTarget(App* self, HWND hwnd) {
     return self->transparency.isTarget(&self->transparency, hwnd);
 }
 
+static boolean isOwnTrayMenu(HWND hwnd) {
+    char cls[64] = {0};
+    GetClassNameA(hwnd, cls, sizeof(cls));
+    return !strcmp(cls, "#32768") && GetWindowThreadProcessId(hwnd, NULL) == GetCurrentThreadId();
+}
+
 static boolean isPopupMenuWindow(HWND hwnd) {
     char cls[128];
     LONG exStyle;
@@ -780,7 +786,7 @@ static boolean applyTrackedAlpha(App* self, HWND hwnd, BYTE alpha) {
 static void applyPopupTransparency(App* self, HWND hwnd) {
     BYTE alpha;
 
-    if (!self || !self->settings.popupTransparency || !isPopupMenuWindow(hwnd))
+    if (!self || (!self->settings.popupTransparency && !isOwnTrayMenu(hwnd)) || !isPopupMenuWindow(hwnd))
         return;
 
     alpha = getCurrentAlpha(self);
@@ -843,7 +849,7 @@ static BOOL CALLBACK applyExplorerAutoWindow(HWND hwnd, LPARAM lParam) {
     }
 
     if (isPopupMenuWindow(hwnd)) {
-        if (self->settings.popupTransparency)
+        if (self->settings.popupTransparency || isOwnTrayMenu(hwnd))
             applyPopupTransparency(self, hwnd);
         else if (self->tracker.isTracked(&self->tracker, hwnd)) {
             for (int i = 0; i < self->tracker.count; i++) {
@@ -1086,7 +1092,7 @@ static BOOL CALLBACK attachInlineMenus(HWND hwnd, LPARAM param) {
             inlineActiveMenu = candidates[i];
         }
     }
-    if (self->settings.popupTransparency && self->transparency.getWindowAlpha(&self->transparency, hwnd) != getCurrentAlpha(self))
+    if (self->transparency.getWindowAlpha(&self->transparency, hwnd) != getCurrentAlpha(self))
         applyPopupTransparency(self, hwnd);
     return true;
 }
@@ -1095,6 +1101,12 @@ static BOOL CALLBACK detachInlineMenus(HWND hwnd, LPARAM param) {
     (void)param;
     RemoveWindowSubclass(hwnd, inlineMenuProc, 77);
     return true;
+}
+
+static void CALLBACK inlineMenuTimer(HWND hwnd, UINT msg, UINT_PTR timer, DWORD time) {
+    (void)hwnd; (void)msg; (void)timer; (void)time;
+    if (appContext)
+        EnumThreadWindows(GetCurrentThreadId(), attachInlineMenus, (LPARAM)appContext);
 }
 
 static void drawInlineMenu(DRAWITEMSTRUCT* draw, MenuItemData* item) {
@@ -1321,8 +1333,8 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         GetCursorPos(&p);
         SetForegroundWindow(hwnd);
 
-        SetTimer(hwnd, TRAY_MENU_TIMER_ID, 15, NULL);
-        UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, null);
+        SetTimer(hwnd, TRAY_MENU_TIMER_ID, 15, inlineMenuTimer);
+        UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, null);
         KillTimer(hwnd, TRAY_MENU_TIMER_ID);
         EnumThreadWindows(GetCurrentThreadId(), detachInlineMenus, 0);
         inlineRecordingAction = HOTKEY_ACTION_NONE;
