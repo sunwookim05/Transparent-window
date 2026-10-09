@@ -35,7 +35,7 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - vertical draggable slider
   - live numeric value
   - live preview on the selected window while adjusting.
-- Hotkey popup panel with transparent styling and visible recording state.
+- Separate Opacity and Shortcuts menus with automatic saving, clickable shortcut combinations, and visible recording state.
 - Dark uninstall confirmation dialog from the tray settings menu.
 - Single-exe first-run setup:
   - copies itself to `%LOCALAPPDATA%\SystemTransparency\SystemTransparency.exe`
@@ -61,6 +61,12 @@ The app then runs from the system tray and automatically starts on future logins
 ## Usage
 
 Right-click the tray icon to open the menu.
+
+- Choose `Opacity` or `Shortcuts` to open their separate menus; `Back` returns to the first menu.
+- In `Opacity`, drag the vertical slider to select and save a custom opacity (60–255, shown as 24–100%). Move upward for more opacity or downward for more transparency. Arrow keys adjust precisely. Explorer windows update immediately when automatic transparency is enabled.
+- In `Shortcuts`, click the current key combination itself to start recording, then hold modifier keys and middle-click (Apply/Restore) or scroll (Adjust). The shortcut is saved immediately; duplicate Apply/Restore combinations are rejected. Click the combination again or press Escape to cancel recording.
+- Press Tab to move between controls. Click outside to dismiss the popup when recording is inactive; Escape cancels recording first, then closes the popup.
+- Choose `More` to access the following settings and actions:
 
 - `Setting > Explorer Auto Transparency`: enable or disable automatic transparency for supported Explorer windows.
 - `Setting > Popup Menu Transparency`: enable or disable best-effort transparency for popup/context menus.
