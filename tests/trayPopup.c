@@ -7,10 +7,21 @@ static int inputStage;
 static boolean selectedPopup;
 static HMENU lastOpenedMenu, waitingMenu;
 static int navigationLevel;
+static boolean idleOpacityTest;
+static boolean mouseNavigation;
+static BOOL CALLBACK checkVisibleMenuAlpha(HWND hwnd, LPARAM param);
 static LRESULT CALLBACK testOwnerProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
     if (msg == WM_INITMENUPOPUP) lastOpenedMenu = (HMENU)w;
     if (msg == WM_MENUSELECT) selectedPopup = (HIWORD(w) & MF_POPUP) != 0;
-    return trayWindowProc(hwnd, msg, w, l);
+    LRESULT result = trayWindowProc(hwnd, msg, w, l);
+    if (idleOpacityTest && msg == WM_INITMENUPOPUP)
+        KillTimer(hwnd, TRAY_MENU_TIMER_ID);
+    if (!idleOpacityTest && !appContext->mouseHook && msg == WM_INITMENUPOPUP && menuMessageHook) {
+        // Exercise the menu-thread mouse hook without either previous fallback.
+        UnhookWindowsHookEx(menuMessageHook);
+        menuMessageHook = NULL;
+    }
+    return result;
 }
 static void pressMenuKey(WORD key) {
     LPARAM flags = 1 | ((LPARAM)MapVirtualKey(key, MAPVK_VK_TO_VSC) << 16);
@@ -31,14 +42,20 @@ static void updateWindows(App* app) {
 }
 static BOOL CALLBACK checkVisibleMenuAlpha(HWND hwnd, LPARAM param) {
     App* app = (App*)param;
-    if (IsWindowVisible(hwnd) && isOwnTrayMenu(hwnd))
+    if (IsWindowVisible(hwnd) && isOwnTrayMenu(hwnd)) {
         assert(app->transparency.getWindowAlpha(&app->transparency, hwnd) == getCurrentAlpha(app));
+    }
     return true;
 }
 static void CALLBACK checkMenu(HWND owner, UINT msg, UINT_PTR timer, DWORD time) {
     (void)msg; (void)timer; (void)time;
     if (++ticks > 60) { EndMenu(); return; }
     EnumThreadWindows(GetCurrentThreadId(), checkVisibleMenuAlpha, (LPARAM)appContext);
+    if (idleOpacityTest) {
+        checked = true;
+        EndMenu();
+        return;
+    }
     /* Navigate the production root -> Setting -> Preset/Hotkeys hierarchy. */
     if (!inlineMenuWindow) {
         if (waitingMenu) {
@@ -46,6 +63,19 @@ static void CALLBACK checkMenu(HWND owner, UINT msg, UINT_PTR timer, DWORD time)
             waitingMenu = NULL;
         }
         UINT target = navigationLevel == 0 ? 3 : navigationLevel == 1 ? (mode == 1 ? 7 : 3) : 4;
+        if (mouseNavigation) {
+            RECT popup;
+            assert(GetMenuItemRect(owner, lastOpenedMenu, target, &popup));
+            SetCursorPos((popup.left + popup.right) / 2, (popup.top + popup.bottom) / 2);
+            INPUT pointer[2] = {0};
+            pointer[0].type = pointer[1].type = INPUT_MOUSE;
+            pointer[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+            pointer[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+            waitingMenu = lastOpenedMenu;
+            navigationLevel++;
+            assert(SendInput(2, pointer, sizeof(INPUT)) == 2);
+            return;
+        }
         if (selectedPopup && selectedInlineMenu == lastOpenedMenu && selectedInlineItem == target) {
             waitingMenu = lastOpenedMenu;
             navigationLevel++;
@@ -69,6 +99,9 @@ static void CALLBACK checkMenu(HWND owner, UINT msg, UINT_PTR timer, DWORD time)
             return;
         }
         if (inputStage == 1) {
+            // SendInput is queued; let the menu consume it before asserting.
+            // The overall timeout still fails if the click is never handled.
+            if (!inlineDragging) return;
             assert(appContext->settings.customAlpha == 255 && inlineDragging);
             SetCursorPos(bottom.x, bottom.y);
             pointer.mi.dwFlags = MOUSEEVENTF_LEFTUP;
@@ -106,10 +139,22 @@ static void CALLBACK checkMenu(HWND owner, UINT msg, UINT_PTR timer, DWORD time)
         assert(saves == before + 1 && inlineRecordingAction == HOTKEY_ACTION_NONE);
         startInlineRecording(inlineMenuWindow, ID_INLINE_ADJUST);
         appContext->ctrlDown = true;
-        MSLLHOOKSTRUCT mouse = {0}; MSG queued;
+        appContext->altDown = appContext->shiftDown = appContext->winDown = false;
+        MSLLHOOKSTRUCT mouse = {0};
+        DWORD expectedModifiers = getCurrentModifiers(appContext);
         assert(mouseHook(HC_ACTION, WM_MOUSEWHEEL, (LPARAM)&mouse) == 1);
-        assert(PeekMessage(&queued, owner, WM_TRAY_RECORD, WM_TRAY_RECORD, PM_REMOVE)); DispatchMessage(&queued);
-        assert(appContext->settings.adjustModifiers & HOTKEY_MOD_CTRL);
+        assert(appContext->settings.adjustModifiers == expectedModifiers);
+        assert(inlineRecordingAction == HOTKEY_ACTION_NONE && IsWindowVisible(inlineMenuWindow));
+        startInlineRecording(inlineMenuWindow, ID_INLINE_APPLY);
+        appContext->shiftDown = true;
+        expectedModifiers = getCurrentModifiers(appContext);
+        before = saves;
+        assert(mouseHook(HC_ACTION, WM_MBUTTONDOWN, (LPARAM)&mouse) == 1);
+        assert(appContext->settings.applyModifiers == expectedModifiers);
+        assert(saves == before + 1 && inlineRecordingAction == HOTKEY_ACTION_NONE);
+        assert(mouseHook(HC_ACTION, WM_MBUTTONUP, (LPARAM)&mouse) == 1);
+        assert(!inlineMiddlePressed && IsWindowVisible(inlineMenuWindow));
+        appContext->shiftDown = false;
         startInlineRecording(inlineMenuWindow, ID_INLINE_RESTORE);
         KBDLLHOOKSTRUCT key = {0}; key.vkCode = VK_ESCAPE;
         assert(keyboardHook(HC_ACTION, WM_KEYDOWN, (LPARAM)&key) == 1 && inlineRecordingAction == HOTKEY_ACTION_NONE);
@@ -136,6 +181,13 @@ int main(void) {
     assert(app.tracker.windows[0].originalAlpha == 255);
     app.settings.customAlpha = 230; applyExplorerAutoWindow(overflow, (LPARAM)&app);
     assert(app.transparency.getWindowAlpha(&app.transparency, overflow) == 230);
+    assert(SetLayeredWindowAttributes(overflow, 0, 255, LWA_ALPHA));
+    winEventCallback(NULL, EVENT_OBJECT_SHOW, overflow, OBJID_WINDOW, 0, 0, 0);
+    assert(app.transparency.getWindowAlpha(&app.transparency, overflow) == 230);
+    assert(SetLayeredWindowAttributes(overflow, 0, 255, LWA_ALPHA));
+    winEventCallback(NULL, EVENT_SYSTEM_MENUPOPUPSTART, overflow, OBJID_CLIENT, 0, 0, 0);
+    assert(app.transparency.getWindowAlpha(&app.transparency, overflow) == 230);
+    assert(app.tracker.count == 1);
     app.tracker.restoreAll(&app.tracker, &app.transparency);
     assert(!(GetWindowLong(overflow, GWL_EXSTYLE) & WS_EX_LAYERED));
     SetWindowLong(overflow, GWL_EXSTYLE, GetWindowLong(overflow, GWL_EXSTYLE) | WS_EX_LAYERED);
@@ -149,9 +201,24 @@ int main(void) {
     app.trayWindow = CreateWindowA(wc.lpszClassName, "Menu interaction check", WS_OVERLAPPEDWINDOW, 100, 100, 160, 100, NULL, NULL, wc.hInstance, NULL); assert(app.trayWindow);
     ShowWindow(app.trayWindow, SW_SHOW);
     SetForegroundWindow(app.trayWindow);
+    // No mouse/key input, and no UI-thread opacity timer to mask regressions.
+    idleOpacityTest = true; checked = false; ticks = 0;
+    app.settings.preset = PRESET_GLASS;
+    app.settings.popupTransparency = false;
+    SetTimer(app.trayWindow, 900, 250, checkMenu);
+    SendMessage(app.trayWindow, WM_TRAY, 0, WM_RBUTTONUP);
+    KillTimer(app.trayWindow, 900);
+    assert(checked);
+    idleOpacityTest = false;
     app.mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseHook, GetModuleHandle(NULL), 0);
     assert(app.mouseHook);
-    for (mode = 1; mode <= 2; mode++) {
+    for (int globalHook = 1; globalHook >= -1; globalHook--) {
+      mouseNavigation = globalHook == -1;
+      if (!globalHook) {
+        UnhookWindowsHookEx(app.mouseHook);
+        app.mouseHook = NULL;
+      }
+      for (mode = 1; mode <= 2; mode++) {
         app.settings.popupTransparency = mode == 1;
         ticks = 0; inputStage = 0; checked = false; inlineMenuWindow = NULL; inlineActiveMenu = NULL;
         selectedPopup = false; lastOpenedMenu = waitingMenu = NULL; navigationLevel = 0;
@@ -160,8 +227,9 @@ int main(void) {
         SendMessage(app.trayWindow, WM_TRAY, 0, WM_RBUTTONUP);
         KillTimer(app.trayWindow, 900); EnumThreadWindows(GetCurrentThreadId(), detachInlineMenus, 0);
         assert(checked);
+      }
     }
-    UnhookWindowsHookEx(app.mouseHook);
+    if (app.mouseHook) UnhookWindowsHookEx(app.mouseHook);
     SetCursorPos(originalCursor.x, originalCursor.y);
     app.tracker.restoreAll(&app.tracker, &app.transparency); DestroyWindow(app.trayWindow);
     puts("Native inline menus, opacity updates, recording and restoration checks passed."); return 0;

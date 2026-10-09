@@ -104,6 +104,10 @@ static boolean inlineDragging = false;
 static HMENU selectedInlineMenu = null;
 static UINT selectedInlineItem = 0;
 static DWORD recordedModifierKeys = 0;
+static HHOOK menuMessageHook = NULL;
+static HHOOK menuPointerHook = NULL;
+static HANDLE menuOpacityTimer = NULL;
+static boolean inlineMiddlePressed = false;
 #define WM_INLINE_START (WM_USER + 4)
 
 
@@ -754,7 +758,7 @@ static boolean isPopupMenuWindow(HWND hwnd) {
 
     GetClassNameA(hwnd, cls, sizeof(cls));
     if (!strcmp(cls, "#32768"))
-        return GetWindowThreadProcessId(hwnd, NULL) == GetCurrentThreadId();
+        return true;
     if (!strcmp(cls, "NotifyIconOverflowWindow") || !strcmp(cls, "TopLevelWindowForOverflowXamlIsland"))
         return true;
 
@@ -969,9 +973,11 @@ static void CALLBACK winEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd
 
     GetClassNameA(hwnd, cls, sizeof(cls));
 
-    if (event == EVENT_OBJECT_SHOW && obj == OBJID_WINDOW && IsWindowVisible(hwnd) && isPopupMenuWindow(hwnd)) {
-        if (!self->tracker.isTracked(&self->tracker, hwnd))
-            applyPopupTransparency(self, hwnd);
+    if (((event == EVENT_OBJECT_SHOW && obj == OBJID_WINDOW) ||
+         event == EVENT_SYSTEM_MENUPOPUPSTART) && isPopupMenuWindow(hwnd)) {
+        // Menu windows can be reused and Windows can reset their layered alpha.
+        // Reapply on every opening, preserving the first snapshot in the tracker.
+        if (!isOwnTrayMenu(hwnd)) applyPopupTransparency(self, hwnd);
         return;
     }
 
@@ -1016,7 +1022,7 @@ static void changeInlineAlpha(HWND hwnd, int y) {
     appContext->settings.customAlpha = (BYTE)value;
     appContext->settings.save(&appContext->settings);
     appContext->applyExplorerAutoAll(appContext);
-    InvalidateRect(hwnd, NULL, false);
+    RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
 }
 
 static void startInlineRecording(HWND hwnd, UINT id) {
@@ -1024,7 +1030,7 @@ static void startInlineRecording(HWND hwnd, UINT id) {
     if (!action) return;
     inlineRecordingAction = inlineRecordingAction == action ? HOTKEY_ACTION_NONE : action;
     inlineMenuWindow = hwnd;
-    InvalidateRect(hwnd, NULL, false);
+    RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
 }
 
 static LRESULT CALLBACK inlineMenuProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref) {
@@ -1092,8 +1098,13 @@ static BOOL CALLBACK attachInlineMenus(HWND hwnd, LPARAM param) {
             inlineActiveMenu = candidates[i];
         }
     }
-    if (self->transparency.getWindowAlpha(&self->transparency, hwnd) != getCurrentAlpha(self))
+    if (self->transparency.getWindowAlpha(&self->transparency, hwnd) != getCurrentAlpha(self)) {
         applyPopupTransparency(self, hwnd);
+        // Run from the menu loop, after native positioning/painting has returned.
+        // A layered menu needs a fresh paint without waiting for mouse input.
+        RedrawWindow(hwnd, NULL, NULL,
+            RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW | RDW_ALLCHILDREN);
+    }
     return true;
 }
 
@@ -1101,6 +1112,78 @@ static BOOL CALLBACK detachInlineMenus(HWND hwnd, LPARAM param) {
     (void)param;
     RemoveWindowSubclass(hwnd, inlineMenuProc, 77);
     return true;
+}
+
+static BOOL CALLBACK updateVisibleMenuOpacity(HWND hwnd, LPARAM param) {
+    App* self = (App*)param;
+    char cls[64] = {0};
+    RECT rect;
+    GetClassNameA(hwnd, cls, sizeof(cls));
+    if (strcmp(cls, "#32768") || !IsWindowVisible(hwnd) ||
+        !GetWindowRect(hwnd, &rect) || rect.right <= rect.left || rect.bottom <= rect.top)
+        return TRUE;
+    BYTE alpha = getCurrentAlpha(self);
+    if (self->transparency.getWindowAlpha(&self->transparency, hwnd) != alpha &&
+        self->transparency.apply(&self->transparency, hwnd, alpha)) {
+        // This worker runs even when the native menu loop is waiting for input.
+        // Own menu windows are transient; keep the shared tracker on the UI thread.
+        RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+        DWORD_PTR result;
+        SendMessageTimeout(self->trayWindow, WM_NULL, 0, 0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &result);
+    }
+    return TRUE;
+}
+
+static VOID CALLBACK menuOpacityTick(PVOID context, BOOLEAN fired) {
+    App* self = (App*)context;
+    (void)fired;
+    EnumThreadWindows(GetWindowThreadProcessId(self->trayWindow, NULL),
+        updateVisibleMenuOpacity, (LPARAM)self);
+}
+
+static boolean handleInlinePointer(UINT message, POINT screenPoint) {
+    if (!appContext || (message != WM_LBUTTONDOWN && message != WM_LBUTTONUP &&
+        !(message == WM_MOUSEMOVE && inlinePointerPressed))) return false;
+    EnumThreadWindows(GetCurrentThreadId(), attachInlineMenus, (LPARAM)appContext);
+    if (!inlineMenuWindow || !inlineActiveMenu || !IsWindowVisible(inlineMenuWindow)) return false;
+    RECT windowRect;
+    GetWindowRect(inlineMenuWindow, &windowRect);
+    boolean hit = inlinePointerPressed;
+    for (UINT i = 0; !hit && i < (inlineActiveMenu == inlineKeysMenu ? 3u : 1u); i++) {
+        RECT row;
+        if (GetMenuItemRect(appContext->trayWindow, inlineActiveMenu, i, &row) &&
+            row.left >= windowRect.left && row.right <= windowRect.right &&
+            PtInRect(&windowRect, screenPoint) && PtInRect(&row, screenPoint)) hit = true;
+    }
+    if (!hit) return false;
+    if (message == WM_LBUTTONDOWN) inlinePointerPressed = true;
+    if (message == WM_LBUTTONUP) inlinePointerPressed = false;
+    ScreenToClient(inlineMenuWindow, &screenPoint);
+    inlineMenuProc(inlineMenuWindow, message,
+        message == WM_MOUSEMOVE ? MK_LBUTTON : 0, MAKELPARAM(screenPoint.x, screenPoint.y),
+        77, (DWORD_PTR)inlineActiveMenu);
+    return true;
+}
+
+static LRESULT CALLBACK menuPointerCallback(int code, WPARAM w, LPARAM l) {
+    if (code == HC_ACTION) {
+        MOUSEHOOKSTRUCT* pointer = (MOUSEHOOKSTRUCT*)l;
+        UINT message = (UINT)w;
+        if (message == WM_NCLBUTTONDOWN) message = WM_LBUTTONDOWN;
+        if (message == WM_NCLBUTTONUP) message = WM_LBUTTONUP;
+        if (message == WM_NCMOUSEMOVE) message = WM_MOUSEMOVE;
+        if (handleInlinePointer(message, pointer->pt)) return 1;
+    }
+    return CallNextHookEx(menuPointerHook, code, w, l);
+}
+
+static LRESULT CALLBACK menuMessageCallback(int code, WPARAM w, LPARAM l) {
+    if (code == MSGF_MENU) {
+        MSG* message = (MSG*)l;
+        if (handleInlinePointer(message->message, message->pt)) return 1;
+    }
+    return CallNextHookEx(menuMessageHook, code, w, l);
 }
 
 static void CALLBACK inlineMenuTimer(HWND hwnd, UINT msg, UINT_PTR timer, DWORD time) {
@@ -1208,7 +1291,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         if (action == HOTKEY_ACTION_ADJUST) self->settings.adjustModifiers = modifiers;
         self->settings.save(&self->settings);
         inlineRecordingAction = HOTKEY_ACTION_NONE;
-        InvalidateRect(inlineMenuWindow, NULL, false);
+        RedrawWindow(inlineMenuWindow, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
         return 0;
     }
 
@@ -1333,9 +1416,19 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         GetCursorPos(&p);
         SetForegroundWindow(hwnd);
 
+        menuPointerHook = SetWindowsHookEx(WH_MOUSE, menuPointerCallback, NULL, GetCurrentThreadId());
+        menuMessageHook = SetWindowsHookEx(WH_MSGFILTER, menuMessageCallback, NULL, GetCurrentThreadId());
+        CreateTimerQueueTimer(&menuOpacityTimer, NULL, menuOpacityTick, self,
+            0, 16, WT_EXECUTEDEFAULT);
         SetTimer(hwnd, TRAY_MENU_TIMER_ID, 15, inlineMenuTimer);
-        UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, null);
+        UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NOANIMATION, p.x, p.y, 0, hwnd, null);
         KillTimer(hwnd, TRAY_MENU_TIMER_ID);
+        if (menuOpacityTimer) DeleteTimerQueueTimer(NULL, menuOpacityTimer, INVALID_HANDLE_VALUE);
+        menuOpacityTimer = NULL;
+        if (menuPointerHook) UnhookWindowsHookEx(menuPointerHook);
+        menuPointerHook = NULL;
+        if (menuMessageHook) UnhookWindowsHookEx(menuMessageHook);
+        menuMessageHook = NULL;
         EnumThreadWindows(GetCurrentThreadId(), detachInlineMenus, 0);
         inlineRecordingAction = HOTKEY_ACTION_NONE;
         inlineDragging = false;
@@ -1461,7 +1554,7 @@ static LRESULT CALLBACK keyboardHook(int code, WPARAM w, LPARAM l) {
         return 1;
     }
     if (down && selectedInlineMenu && selectedInlineMenu == inlineKeysMenu && k->vkCode == VK_RETURN && inlineAction(selectedInlineItem)) {
-        PostMessage(self->trayWindow, WM_INLINE_START, selectedInlineItem, 0);
+        SendMessage(self->trayWindow, WM_INLINE_START, selectedInlineItem, 0);
         return 1;
     }
     if (down && selectedInlineMenu && selectedInlineMenu == inlineAlphaMenu && inlineMenuWindow &&
@@ -1553,6 +1646,14 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
 
     DWORD modifiers = getCurrentModifiers(self);
 
+    if (w == WM_MBUTTONUP && inlineMiddlePressed) {
+        inlineMiddlePressed = false;
+        return 1;
+    }
+
+    if (menuMessageHook && (w == WM_LBUTTONDOWN || w == WM_LBUTTONUP))
+        EnumThreadWindows(GetCurrentThreadId(), attachInlineMenus, (LPARAM)self);
+
     /* TrackPopupMenu consumes input before window dispatch: intercept interactive rows here. */
     if (inlineActiveMenu && inlineMenuWindow && IsWindowVisible(inlineMenuWindow) &&
         (w == WM_LBUTTONDOWN || w == WM_LBUTTONUP || (w == WM_MOUSEMOVE && inlinePointerPressed))) {
@@ -1569,7 +1670,9 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
         if (hit) {
             if (w == WM_LBUTTONDOWN) inlinePointerPressed = true;
             if (w == WM_LBUTTONUP) inlinePointerPressed = false;
-            PostMessage(self->trayWindow, WM_INLINE_POINTER, w, MAKELPARAM(pointer->pt.x, pointer->pt.y));
+            // Handle before returning to the native menu loop. Posted owner
+            // messages can remain queued while TrackPopupMenu waits for input.
+            SendMessage(self->trayWindow, WM_INLINE_POINTER, w, MAKELPARAM(pointer->pt.x, pointer->pt.y));
             return 1;
         }
     }
@@ -1577,8 +1680,9 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
     if (inlineRecordingAction) {
         if ((w == WM_MBUTTONDOWN && inlineRecordingAction != HOTKEY_ACTION_ADJUST) ||
             (w == WM_MOUSEWHEEL && inlineRecordingAction == HOTKEY_ACTION_ADJUST)) {
+            if (w == WM_MBUTTONDOWN) inlineMiddlePressed = true;
             if (modifiers & HOTKEY_MOD_WIN) self->winUsed = true;
-            PostMessage(self->trayWindow, WM_TRAY_RECORD, modifiers, inlineRecordingAction);
+            SendMessage(self->trayWindow, WM_TRAY_RECORD, modifiers, inlineRecordingAction);
             return 1;
         }
         return CallNextHookEx(null, code, w, l);
@@ -1652,8 +1756,10 @@ static void run(App* self) {
     addTrayIcon(self);
 
     self->winEventHook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, null, winEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
-    self->keyHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardHook, null, 0);
-    self->mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseHook, null, 0);
+    self->popupEventHook = SetWinEventHook(EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUPOPUPSTART,
+        null, winEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
+    self->keyHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardHook, GetModuleHandle(NULL), 0);
+    self->mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseHook, GetModuleHandle(NULL), 0);
 
     MSG msg;
     while (GetMessage(&msg, null, 0, 0)) {
@@ -1667,6 +1773,7 @@ static void run(App* self) {
     removeTrayIcon(self);
 
     if (self->winEventHook) UnhookWinEvent(self->winEventHook);
+    if (self->popupEventHook) UnhookWinEvent(self->popupEventHook);
     if (self->keyHook) UnhookWindowsHookEx(self->keyHook);
     if (self->mouseHook) UnhookWindowsHookEx(self->mouseHook);
 

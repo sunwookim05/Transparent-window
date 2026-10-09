@@ -24,6 +24,7 @@ It is written in C with the Win32 API. The app is distributed as a single execut
 - Dark owner-drawn tray menu with compact popup panels for common settings.
 - Optional popup/context menu transparency, enabled by default.
 - The app's own tray menu and submenus follow the selected opacity even when external popup transparency is disabled.
+- Tray menu opacity is applied when the menu opens; hovering or clicking is not required.
 - English and Korean UI language support.
 - Transparency presets:
   - `Solid`: 255
