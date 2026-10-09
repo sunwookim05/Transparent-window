@@ -96,6 +96,9 @@ static boolean statusMenuOpen = false;
 static HMENU inlineAlphaMenu = null;
 static HMENU inlineKeysMenu = null;
 static HWND inlineMenuWindow = null;
+static HMENU inlineActiveMenu = null;
+static boolean inlinePointerPressed = false;
+#define WM_INLINE_POINTER (WM_USER + 5)
 static int inlineRecordingAction = HOTKEY_ACTION_NONE;
 static boolean inlineDragging = false;
 static HMENU selectedInlineMenu = null;
@@ -1022,14 +1025,13 @@ static LRESULT CALLBACK inlineMenuProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, 
     HMENU menu = (HMENU)ref;
     if (menu == inlineAlphaMenu) {
         if (msg == WM_LBUTTONDOWN || (msg == WM_MOUSEMOVE && inlineDragging)) {
-            if (msg == WM_LBUTTONDOWN) { inlineDragging = true; SetCapture(hwnd); }
+            if (msg == WM_LBUTTONDOWN) inlineDragging = true;
             changeInlineAlpha(hwnd, (short)HIWORD(l));
             return 0;
         }
         if (msg == WM_LBUTTONUP) {
             if (inlineDragging) changeInlineAlpha(hwnd, (short)HIWORD(l));
             inlineDragging = false;
-            if (GetCapture() == hwnd) ReleaseCapture();
             return 0;
         }
         if (msg == WM_CAPTURECHANGED) inlineDragging = false;
@@ -1081,6 +1083,7 @@ static BOOL CALLBACK attachInlineMenus(HWND hwnd, LPARAM param) {
             itemRect.top >= windowRect.top && itemRect.bottom <= windowRect.bottom) {
             SetWindowSubclass(hwnd, inlineMenuProc, 77, (DWORD_PTR)candidates[i]);
             inlineMenuWindow = hwnd;
+            inlineActiveMenu = candidates[i];
         }
     }
     if (self->settings.popupTransparency && self->transparency.getWindowAlpha(&self->transparency, hwnd) != getCurrentAlpha(self))
@@ -1103,8 +1106,8 @@ static void drawInlineMenu(DRAWITEMSTRUCT* draw, MenuItemData* item) {
         paintTrayCard(draw->hDC, rect, UI_MENU_HOVER, UI_MENU_HOVER);
     if (item->id == ID_INLINE_ALPHA) {
         WCHAR value[80];
-        swprintf(value, 80, L"%s  %u%%", effectiveLanguage(appContext) == LANGUAGE_KOREAN ? L"불투명도" : L"Opacity",
-            (unsigned)((getCurrentAlpha(appContext) * 100 + 127) / 255));
+        swprintf(value, 80, L"%s  %u", effectiveLanguage(appContext) == LANGUAGE_KOREAN ? L"불투명도" : L"Opacity",
+            (unsigned)getCurrentAlpha(appContext));
         RECT title = rect; title.top += 12; title.bottom = title.top + 24;
         SetTextColor(draw->hDC, UI_TEXT);
         DrawTextW(draw->hDC, value, -1, &title, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -1116,6 +1119,12 @@ static void drawInlineMenu(DRAWITEMSTRUCT* draw, MenuItemData* item) {
         paintTrayCard(draw->hDC, active, UI_ACCENT, UI_ACCENT);
         RECT knob = {track.left - 5, y - 8, track.right + 5, y + 8};
         paintTrayCard(draw->hDC, knob, UI_TEXT, UI_TEXT);
+        RECT limit = rect;
+        limit.top += 38; limit.bottom = limit.top + 18;
+        SetTextColor(draw->hDC, UI_MUTED);
+        DrawTextW(draw->hDC, L"255", -1, &limit, DT_CENTER | DT_SINGLELINE);
+        limit.top = rect.bottom - 18; limit.bottom = rect.bottom;
+        DrawTextW(draw->hDC, L"60", -1, &limit, DT_CENTER | DT_SINGLELINE);
     } else {
         int action = inlineAction(item->id);
         WCHAR shortcut[128];
@@ -1142,6 +1151,15 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
     if (!self)
         return DefWindowProc(hwnd, msg, w, l);
+
+    if (msg == WM_INLINE_POINTER) {
+        if (!inlineMenuWindow || !IsWindowVisible(inlineMenuWindow) || !inlineActiveMenu) return 0;
+        POINT point = {(short)LOWORD(l), (short)HIWORD(l)};
+        ScreenToClient(inlineMenuWindow, &point);
+        inlineMenuProc(inlineMenuWindow, (UINT)w, w == WM_MOUSEMOVE ? MK_LBUTTON : 0,
+            MAKELPARAM(point.x, point.y), 77, (DWORD_PTR)inlineActiveMenu);
+        return 0;
+    }
 
     if (msg == WM_TIMER && w == TRAY_MENU_TIMER_ID) {
         EnumThreadWindows(GetCurrentThreadId(), attachInlineMenus, (LPARAM)self);
@@ -1310,6 +1328,8 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         inlineRecordingAction = HOTKEY_ACTION_NONE;
         inlineDragging = false;
         inlineMenuWindow = null;
+        inlineActiveMenu = null;
+        inlinePointerPressed = false;
         selectedInlineMenu = null;
         selectedInlineItem = 0;
         PostMessage(hwnd, WM_NULL, 0, 0);
@@ -1520,6 +1540,27 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
         return CallNextHookEx(null, code, w, l);
 
     DWORD modifiers = getCurrentModifiers(self);
+
+    /* TrackPopupMenu consumes input before window dispatch: intercept interactive rows here. */
+    if (inlineActiveMenu && inlineMenuWindow && IsWindowVisible(inlineMenuWindow) &&
+        (w == WM_LBUTTONDOWN || w == WM_LBUTTONUP || (w == WM_MOUSEMOVE && inlinePointerPressed))) {
+        MSLLHOOKSTRUCT* pointer = (MSLLHOOKSTRUCT*)l;
+        boolean hit = inlinePointerPressed;
+        RECT windowRect;
+        GetWindowRect(inlineMenuWindow, &windowRect);
+        for (UINT i = 0; !hit && i < (inlineActiveMenu == inlineKeysMenu ? 3u : 1u); i++) {
+            RECT row;
+            if (GetMenuItemRect(self->trayWindow, inlineActiveMenu, i, &row) &&
+                row.left >= windowRect.left && row.right <= windowRect.right &&
+                PtInRect(&windowRect, pointer->pt) && PtInRect(&row, pointer->pt)) hit = true;
+        }
+        if (hit) {
+            if (w == WM_LBUTTONDOWN) inlinePointerPressed = true;
+            if (w == WM_LBUTTONUP) inlinePointerPressed = false;
+            PostMessage(self->trayWindow, WM_INLINE_POINTER, w, MAKELPARAM(pointer->pt.x, pointer->pt.y));
+            return 1;
+        }
+    }
 
     if (inlineRecordingAction) {
         if ((w == WM_MBUTTONDOWN && inlineRecordingAction != HOTKEY_ACTION_ADJUST) ||

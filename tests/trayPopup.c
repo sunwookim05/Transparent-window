@@ -3,6 +3,7 @@
 #include "../src/App.c"
 static int saves, ticks, mode;
 static boolean checked;
+static int inputStage;
 static void saveSettings(Settings* s) { (void)s; saves++; }
 static void updateWindows(App* app) {
     if (inlineMenuWindow) applyExplorerAutoWindow(inlineMenuWindow, (LPARAM)app);
@@ -17,19 +18,37 @@ static void CALLBACK checkMenu(HWND owner, UINT msg, UINT_PTR timer, DWORD time)
     assert(GetMenuItemRect(owner, mode == 1 ? inlineAlphaMenu : inlineKeysMenu, 0, &rect));
     if (mode == 1) {
         POINT top = {rect.left + 40, rect.top + 60}, bottom = {rect.left + 40, rect.bottom - 24};
-        ScreenToClient(inlineMenuWindow, &top); ScreenToClient(inlineMenuWindow, &bottom);
-        SendMessage(inlineMenuWindow, WM_LBUTTONDOWN, 0, MAKELPARAM(top.x, top.y));
-        assert(appContext->settings.customAlpha == 255 && inlineDragging);
-        SendMessage(inlineMenuWindow, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(bottom.x, bottom.y));
-        SendMessage(inlineMenuWindow, WM_LBUTTONUP, 0, MAKELPARAM(bottom.x, bottom.y));
+        INPUT pointer = {0}; pointer.type = INPUT_MOUSE;
+        if (inputStage == 0) {
+            SetCursorPos(top.x, top.y);
+            pointer.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+            assert(SendInput(1, &pointer, sizeof(pointer)) == 1);
+            inputStage = 1;
+            return;
+        }
+        if (inputStage == 1) {
+            assert(appContext->settings.customAlpha == 255 && inlineDragging);
+            SetCursorPos(bottom.x, bottom.y);
+            pointer.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+            assert(SendInput(1, &pointer, sizeof(pointer)) == 1);
+            inputStage = 2;
+            return;
+        }
         assert(appContext->settings.customAlpha == 60 && !inlineDragging);
         assert(appContext->transparency.getWindowAlpha(&appContext->transparency, inlineMenuWindow) == 60);
         SendMessage(inlineMenuWindow, WM_KEYDOWN, VK_UP, 0);
         assert(appContext->settings.customAlpha == 61);
     } else {
-        POINT point = {rect.left + 40, rect.top + 40}; ScreenToClient(inlineMenuWindow, &point);
-        SendMessage(inlineMenuWindow, WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
-        SendMessage(inlineMenuWindow, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+        if (inputStage == 0) {
+            INPUT pointer[2] = {0};
+            pointer[0].type = pointer[1].type = INPUT_MOUSE;
+            pointer[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+            pointer[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+            SetCursorPos(rect.left + 40, rect.top + 40);
+            assert(SendInput(2, pointer, sizeof(INPUT)) == 2);
+            inputStage = 1;
+            return;
+        }
         assert(inlineRecordingAction == HOTKEY_ACTION_APPLY);
         int before = saves;
         SendMessage(owner, WM_TRAY_RECORD, appContext->settings.restoreModifiers, HOTKEY_ACTION_APPLY);
@@ -54,6 +73,7 @@ static void CALLBACK checkMenu(HWND owner, UINT msg, UINT_PTR timer, DWORD time)
     assert(IsWindow(inlineMenuWindow)); checked = true; EndMenu();
 }
 int main(void) {
+    POINT originalCursor; GetCursorPos(&originalCursor);
     App app = new_App(); app.settings.reset(&app.settings);
     app.settings.save = saveSettings; app.applyExplorerAutoAll = updateWindows; appContext = &app; ensureUiResources();
     WNDCLASSA wc = {0}; wc.lpfnWndProc = DefWindowProcA; wc.hInstance = GetModuleHandle(NULL);
@@ -75,18 +95,22 @@ int main(void) {
     assert(alpha == 180 && flags == (LWA_ALPHA | LWA_COLORKEY) && key == RGB(1,2,3)); DestroyWindow(overflow);
     wc.lpfnWndProc = trayWindowProc; wc.lpszClassName = "InlineMenuTestOwner"; assert(RegisterClassA(&wc));
     app.trayWindow = CreateWindowA(wc.lpszClassName, "", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, wc.hInstance, NULL); assert(app.trayWindow);
+    app.mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseHook, GetModuleHandle(NULL), 0);
+    assert(app.mouseHook);
     for (mode = 1; mode <= 2; mode++) {
         resetMenuItems(); inlineAlphaMenu = CreatePopupMenu(); inlineKeysMenu = CreatePopupMenu();
         appendDarkMenu(inlineAlphaMenu, MF_STRING, ID_INLINE_ALPHA, L"", false, false);
         appendDarkMenu(inlineKeysMenu, MF_STRING, ID_INLINE_APPLY, tr(STR_HOTKEY_APPLY), false, false);
         appendDarkMenu(inlineKeysMenu, MF_STRING, ID_INLINE_RESTORE, tr(STR_HOTKEY_RESTORE), false, false);
         appendDarkMenu(inlineKeysMenu, MF_STRING, ID_INLINE_ADJUST, tr(STR_HOTKEY_ADJUST), false, false);
-        ticks = 0; checked = false; inlineMenuWindow = NULL;
+        ticks = 0; inputStage = 0; checked = false; inlineMenuWindow = NULL; inlineActiveMenu = NULL;
         SetTimer(app.trayWindow, 900, 30, checkMenu);
         TrackPopupMenu(mode == 1 ? inlineAlphaMenu : inlineKeysMenu, TPM_RETURNCMD | TPM_NONOTIFY, 100, 100, 0, app.trayWindow, NULL);
         KillTimer(app.trayWindow, 900); EnumThreadWindows(GetCurrentThreadId(), detachInlineMenus, 0);
         assert(checked); DestroyMenu(inlineAlphaMenu); DestroyMenu(inlineKeysMenu); inlineAlphaMenu = inlineKeysMenu = NULL;
     }
+    UnhookWindowsHookEx(app.mouseHook);
+    SetCursorPos(originalCursor.x, originalCursor.y);
     app.tracker.restoreAll(&app.tracker, &app.transparency); DestroyWindow(app.trayWindow);
     puts("Native inline menus, opacity updates, recording and restoration checks passed."); return 0;
 }

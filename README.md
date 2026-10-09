@@ -33,7 +33,7 @@ It is written in C with the Win32 API. The app is distributed as a single execut
 - Custom Alpha submenu with:
   - dark UI
   - vertical draggable slider
-  - live opacity percentage and immediate saving
+  - live alpha value (60–255) and immediate saving
   - live updates to enabled Explorer and popup transparency targets.
 - Clickable shortcut combinations inside the Hotkeys submenu, with automatic saving and visible recording state.
 - Restore tracked windows' original opacity and layered styles on normal application exit.
@@ -73,7 +73,7 @@ Right-click the tray icon to open the menu.
 - `Setting > Hotkeys`: record shortcut modifier keys inside the submenu.
 - `Setting > Language`: choose System default, English, or Korean.
 - `Setting > Preset`: choose the transparency level used by automatic mode and the apply-preset shortcut.
-- `Setting > Preset > Custom Alpha`: choose an opacity from 60 to 255 inside the submenu (displayed as 24–100%).
+- `Setting > Preset > Custom Alpha`: choose an opacity from 60 to 255 inside the submenu (displayed directly as 60–255).
 - `Setting > Uninstall`: remove the installed executable, startup task, app registry settings, and bundled certificate registration.
 - `Check for Updates`: manually check the latest GitHub Release.
 - `Open Log`: open the updater log file.
