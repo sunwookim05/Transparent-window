@@ -21,7 +21,6 @@ typedef struct APP {
     HHOOK keyHook;
     HHOOK mouseHook;
     HWINEVENTHOOK winEventHook;
-    HWINEVENTHOOK popupEventHook;
     HWND trayWindow;
     boolean trayIconAdded;
     UINT taskbarCreatedMessage;

@@ -14,8 +14,6 @@
 #define TRAY_ID 1
 #define TRAY_RETRY_TIMER_ID 100
 #define TRAY_STATUS_TIMER_ID 101
-#define POPUP_RETRY_TIMER_ID 102
-#define POPUP_RETRY_LIMIT 10
 
 #define ID_SETTING_EXPLORER  10
 #define ID_SETTING_STARTUP   11
@@ -87,7 +85,6 @@ static HFONT uiFont = null;
 static boolean confirmDialogOk = false;
 static BYTE confirmDialogAlpha = ALPHA_OPAQUE;
 static boolean statusMenuOpen = false;
-static int popupRetryRemaining = 0;
 static HWND hotkeyDialogWindow = null;
 static DWORD hotkeyDialogApplyModifiers = HOTKEY_MOD_CTRL;
 static DWORD hotkeyDialogRestoreModifiers = HOTKEY_MOD_WIN;
@@ -1087,7 +1084,7 @@ static boolean isPopupMenuWindow(HWND hwnd) {
 
     GetClassNameA(hwnd, cls, sizeof(cls));
     if (!strcmp(cls, "#32768"))
-        return true;
+        return false;
 
     exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
     style = GetWindowLong(hwnd, GWL_STYLE);
@@ -1116,31 +1113,6 @@ static void applyPopupTransparency(App* self, HWND hwnd) {
     alpha = getCurrentAlpha(self);
     self->transparency.apply(&self->transparency, hwnd, alpha);
     self->transparency.refresh(&self->transparency, hwnd);
-}
-
-static BOOL CALLBACK applyPopupTransparencyWindow(HWND hwnd, LPARAM lParam) {
-    App* self = (App*)lParam;
-
-    if (IsWindowVisible(hwnd))
-        applyPopupTransparency(self, hwnd);
-
-    return true;
-}
-
-static void applyPopupTransparencyAll(App* self) {
-    if (!self || !self->settings.popupTransparency)
-        return;
-
-    EnumWindows(applyPopupTransparencyWindow, (LPARAM)self);
-}
-
-static void schedulePopupTransparencyScan(App* self) {
-    if (!self || !self->settings.popupTransparency || !self->trayWindow)
-        return;
-
-    applyPopupTransparencyAll(self);
-    popupRetryRemaining = POPUP_RETRY_LIMIT;
-    SetTimer(self->trayWindow, POPUP_RETRY_TIMER_ID, 40, null);
 }
 
 static void showStatusMenu(HWND owner, POINT point, const WCHAR* message) {
@@ -1485,13 +1457,8 @@ static void CALLBACK winEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd
 
     GetClassNameA(hwnd, cls, sizeof(cls));
 
-    if (event == EVENT_SYSTEM_MENUPOPUPSTART) {
-        schedulePopupTransparencyScan(self);
-        return;
-    }
-
-    if (obj == OBJID_WINDOW && isPopupMenuWindow(hwnd)) {
-        schedulePopupTransparencyScan(self);
+    if (event == EVENT_OBJECT_SHOW && obj == OBJID_WINDOW && IsWindowVisible(hwnd) && isPopupMenuWindow(hwnd)) {
+        applyPopupTransparency(self, hwnd);
         return;
     }
 
@@ -1569,17 +1536,6 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         return 0;
     }
 
-    if (msg == WM_TIMER && w == POPUP_RETRY_TIMER_ID) {
-        applyPopupTransparencyAll(self);
-
-        if (--popupRetryRemaining <= 0) {
-            popupRetryRemaining = 0;
-            KillTimer(hwnd, POPUP_RETRY_TIMER_ID);
-        }
-
-        return 0;
-    }
-
     if (msg == WM_TRAY && isTrayContextMenu(l)) {
         HMENU root = CreatePopupMenu();
         HMENU setting = CreatePopupMenu();
@@ -1639,7 +1595,8 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         GetCursorPos(&p);
         SetForegroundWindow(hwnd);
 
-        UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, null);
+        UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, null);
+        PostMessage(hwnd, WM_NULL, 0, 0);
         GetCursorPos(&statusPoint);
 
         switch (cmd) {
@@ -1759,9 +1716,6 @@ static LRESULT CALLBACK keyboardHook(int code, WPARAM w, LPARAM l) {
     const boolean down = (w == WM_KEYDOWN || w == WM_SYSKEYDOWN);
     const boolean up   = (w == WM_KEYUP   || w == WM_SYSKEYUP);
 
-    if (down && (k->vkCode == VK_APPS || (k->vkCode == VK_F10 && (GetAsyncKeyState(VK_SHIFT) & 0x8000))))
-        schedulePopupTransparencyScan(self);
-
     if (k->vkCode == VK_CONTROL || k->vkCode == VK_LCONTROL || k->vkCode == VK_RCONTROL) {
         if (down) self->ctrlDown = true;
         else if (up) self->ctrlDown = false;
@@ -1827,9 +1781,6 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
         return CallNextHookEx(null, code, w, l);
 
     DWORD modifiers = getCurrentModifiers(self);
-
-    if (w == WM_RBUTTONUP)
-        schedulePopupTransparencyScan(self);
 
     if (hotkeyRecordingAction != HOTKEY_ACTION_NONE) {
         if ((w == WM_MBUTTONDOWN && hotkeyRecordingAction != HOTKEY_ACTION_ADJUST) ||
@@ -1907,7 +1858,6 @@ static void run(App* self) {
     addTrayIcon(self);
 
     self->winEventHook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, null, winEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
-    self->popupEventHook = SetWinEventHook(EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUPOPUPSTART, null, winEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
     self->keyHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardHook, null, 0);
     self->mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseHook, null, 0);
 
@@ -1918,11 +1868,9 @@ static void run(App* self) {
     }
 
     KillTimer(self->trayWindow, TRAY_RETRY_TIMER_ID);
-    KillTimer(self->trayWindow, POPUP_RETRY_TIMER_ID);
     removeTrayIcon(self);
 
     if (self->winEventHook) UnhookWinEvent(self->winEventHook);
-    if (self->popupEventHook) UnhookWinEvent(self->popupEventHook);
     if (self->keyHook) UnhookWindowsHookEx(self->keyHook);
     if (self->mouseHook) UnhookWindowsHookEx(self->mouseHook);
 
@@ -1943,7 +1891,6 @@ App new_App(void) {
         .keyHook = null,
         .mouseHook = null,
         .winEventHook = null,
-        .popupEventHook = null,
         .trayWindow = null,
         .trayIconAdded = false,
         .taskbarCreatedMessage = 0,

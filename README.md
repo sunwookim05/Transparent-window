@@ -91,6 +91,7 @@ gcc src\main.c src\App.c src\Installer.c src\Updater.c src\Settings.c src\Transp
 
 - Some protected, game, GPU-accelerated, or security-sensitive windows may reject transparency changes.
 - The app is optimized for Windows Explorer and common shell windows.
+- Popup menu transparency is best effort on Windows 11. Classic Win32 menu windows are handled conservatively so context menus keep opening reliably.
 - Administrator rights are required for first-run setup, certificate registration, and highest-privilege startup registration.
 
 ## License
