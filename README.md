@@ -22,6 +22,7 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - default `Win + Middle Click`: restore the active window to full opacity.
   - default `Ctrl + Win + Mouse Wheel`: adjust the active window opacity step by step.
 - Tray menu with dark owner-drawn styling.
+- Optional popup menu transparency for tray and Windows context menus.
 - English and Korean UI language support.
 - Transparency presets:
   - `Solid`: 255
@@ -61,6 +62,7 @@ The app then runs from the system tray and automatically starts on future logins
 Right-click the tray icon to open the menu.
 
 - `Setting > Explorer Auto Transparency`: enable or disable automatic transparency for supported Explorer windows.
+- `Setting > Popup Menu Transparency`: enable or disable transparency for popup/context menus.
 - `Setting > Run at Startup`: enable or disable the startup scheduled task.
 - `Setting > Hotkeys...`: record the modifier keys used for the manual transparency shortcuts.
 - `Setting > Language`: choose System default, English, or Korean.

@@ -25,6 +25,7 @@ typedef enum {
 
 typedef struct SETTINGS {
     boolean explorerAuto;
+    boolean popupTransparency;
     boolean startupEnabled;
     TransparencyPreset preset;
     BYTE customAlpha;

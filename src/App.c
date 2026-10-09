@@ -14,6 +14,8 @@
 #define TRAY_ID 1
 #define TRAY_RETRY_TIMER_ID 100
 #define TRAY_STATUS_TIMER_ID 101
+#define POPUP_RETRY_TIMER_ID 102
+#define POPUP_RETRY_LIMIT 10
 
 #define ID_SETTING_EXPLORER  10
 #define ID_SETTING_STARTUP   11
@@ -22,6 +24,7 @@
 #define ID_SETTING_RESET     14
 #define ID_SETTING_UNINSTALL 15
 #define ID_SETTING_LANGUAGE  16
+#define ID_SETTING_POPUPS    17
 
 #define ID_PRESET_SOLID     20
 #define ID_PRESET_SOFT      21
@@ -61,6 +64,17 @@
 #endif
 #define DWMWA_USE_IMMERSIVE_DARK_MODE_OLD 19
 
+#define UI_BG RGB(18, 18, 20)
+#define UI_PANEL RGB(30, 30, 34)
+#define UI_PANEL_HOVER RGB(42, 42, 48)
+#define UI_BORDER RGB(64, 64, 72)
+#define UI_TEXT RGB(242, 242, 246)
+#define UI_MUTED RGB(170, 170, 178)
+#define UI_ACCENT RGB(94, 174, 255)
+#define UI_MENU_BG RGB(22, 22, 25)
+#define UI_MENU_HOVER RGB(44, 44, 50)
+#define UI_MENU_TEXT RGB(238, 238, 242)
+
 static App* appContext = null;
 static BYTE alphaDialogValue = 150;
 static boolean alphaDialogOk = false;
@@ -69,9 +83,11 @@ static BYTE alphaPreviewOriginal = ALPHA_OPAQUE;
 static boolean alphaControlsUpdating = false;
 static HBRUSH alphaDarkBrush = null;
 static HBRUSH alphaEditBrush = null;
+static HFONT uiFont = null;
 static boolean confirmDialogOk = false;
 static BYTE confirmDialogAlpha = ALPHA_OPAQUE;
 static boolean statusMenuOpen = false;
+static int popupRetryRemaining = 0;
 static HWND hotkeyDialogWindow = null;
 static DWORD hotkeyDialogApplyModifiers = HOTKEY_MOD_CTRL;
 static DWORD hotkeyDialogRestoreModifiers = HOTKEY_MOD_WIN;
@@ -83,6 +99,7 @@ typedef struct {
     WCHAR text[160];
     boolean checked;
     boolean submenu;
+    boolean separator;
 } MenuItemData;
 
 static MenuItemData menuItems[64];
@@ -92,7 +109,7 @@ static void resetMenuItems(void) {
     menuItemCount = 0;
 }
 
-static MenuItemData* newMenuItem(const WCHAR* text, boolean checked, boolean submenu) {
+static MenuItemData* newMenuItem(const WCHAR* text, boolean checked, boolean submenu, boolean separator) {
     MenuItemData* item;
 
     if (menuItemCount >= 64)
@@ -102,11 +119,16 @@ static MenuItemData* newMenuItem(const WCHAR* text, boolean checked, boolean sub
     lstrcpynW(item->text, text, sizeof(item->text) / sizeof(item->text[0]));
     item->checked = checked;
     item->submenu = submenu;
+    item->separator = separator;
     return item;
 }
 
 static void appendDarkMenu(HMENU menu, UINT flags, UINT_PTR id, const WCHAR* text, boolean checked, boolean submenu) {
-    AppendMenuW(menu, flags | MF_OWNERDRAW, id, (LPCWSTR)newMenuItem(text, checked, submenu));
+    AppendMenuW(menu, flags | MF_OWNERDRAW, id, (LPCWSTR)newMenuItem(text, checked, submenu, false));
+}
+
+static void appendDarkSeparator(HMENU menu) {
+    AppendMenuW(menu, MF_OWNERDRAW | MF_DISABLED, 0, (LPCWSTR)newMenuItem(L"", false, false, true));
 }
 
 typedef enum {
@@ -114,6 +136,7 @@ typedef enum {
     STR_LICENSE,
     STR_SETTING,
     STR_EXPLORER_AUTO,
+    STR_POPUP_TRANSPARENCY,
     STR_RUN_AT_STARTUP,
     STR_HOTKEYS,
     STR_LANGUAGE,
@@ -176,6 +199,7 @@ static const WCHAR* textFor(LanguageMode language, StringId id) {
         case STR_LICENSE: return ko ? L"MIT 라이선스" : L"Licensed under MIT";
         case STR_SETTING: return ko ? L"설정" : L"Setting";
         case STR_EXPLORER_AUTO: return ko ? L"Explorer 자동 투명화" : L"Explorer Auto Transparency";
+        case STR_POPUP_TRANSPARENCY: return ko ? L"팝업 메뉴 투명화" : L"Popup Menu Transparency";
         case STR_RUN_AT_STARTUP: return ko ? L"시작 시 실행" : L"Run at Startup";
         case STR_HOTKEYS: return ko ? L"단축키..." : L"Hotkeys...";
         case STR_LANGUAGE: return ko ? L"언어" : L"Language";
@@ -225,6 +249,34 @@ static const WCHAR* textFor(LanguageMode language, StringId id) {
 
 static const WCHAR* tr(StringId id) {
     return textFor(effectiveLanguage(appContext), id);
+}
+
+static void ensureUiResources(void) {
+    if (!alphaDarkBrush)
+        alphaDarkBrush = CreateSolidBrush(UI_BG);
+    if (!alphaEditBrush)
+        alphaEditBrush = CreateSolidBrush(UI_PANEL);
+    if (!uiFont)
+        uiFont = CreateFontW(-13, 0, 0, 0, FW_NORMAL, false, false, false, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
+static BOOL CALLBACK applyDialogFontProc(HWND child, LPARAM lParam) {
+    SendMessageW(child, WM_SETFONT, (WPARAM)lParam, true);
+    return true;
+}
+
+static void polishDialog(HWND hwnd) {
+    BOOL dark = true;
+
+    ensureUiResources();
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &dark, sizeof(dark));
+
+    if (uiFont) {
+        SendMessageW(hwnd, WM_SETFONT, (WPARAM)uiFont, true);
+        EnumChildWindows(hwnd, applyDialogFontProc, (LPARAM)uiFont);
+    }
 }
 
 static void centerWindow(HWND window) {
@@ -336,6 +388,9 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
     RECT track;
     RECT active;
     HBRUSH brush;
+    HPEN pen;
+    HGDIOBJ oldBrush;
+    HGDIOBJ oldPen;
     int x;
 
     (void)id;
@@ -363,7 +418,7 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
 
         GetClientRect(hwnd, &rect);
 
-        brush = CreateSolidBrush(RGB(24, 24, 27));
+        brush = CreateSolidBrush(UI_BG);
         FillRect(dc, &rect, brush);
         DeleteObject(brush);
 
@@ -372,19 +427,31 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
         track.top = rect.top + ((rect.bottom - rect.top) / 2) - 3;
         track.bottom = track.top + 6;
 
-        brush = CreateSolidBrush(RGB(68, 68, 76));
-        FillRect(dc, &track, brush);
+        brush = CreateSolidBrush(UI_BORDER);
+        pen = CreatePen(PS_SOLID, 1, UI_BORDER);
+        oldBrush = SelectObject(dc, brush);
+        oldPen = SelectObject(dc, pen);
+        RoundRect(dc, track.left, track.top, track.right, track.bottom, 6, 6);
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBrush);
+        DeleteObject(pen);
         DeleteObject(brush);
 
         x = alphaToSliderX(hwnd, alphaDialogValue);
         active = track;
         active.right = x;
 
-        brush = CreateSolidBrush(RGB(88, 166, 255));
-        FillRect(dc, &active, brush);
+        brush = CreateSolidBrush(UI_ACCENT);
+        pen = CreatePen(PS_SOLID, 1, UI_ACCENT);
+        oldBrush = SelectObject(dc, brush);
+        oldPen = SelectObject(dc, pen);
+        RoundRect(dc, active.left, active.top, active.right, active.bottom, 6, 6);
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBrush);
+        DeleteObject(pen);
         DeleteObject(brush);
 
-        brush = CreateSolidBrush(RGB(238, 244, 255));
+        brush = CreateSolidBrush(UI_TEXT);
         Ellipse(dc, x - 7, track.top - 5, x + 7, track.bottom + 5);
         DeleteObject(brush);
 
@@ -603,20 +670,27 @@ static boolean createUninstallBatch(string currentExe, string installedExe) {
 
 static void drawDarkButton(DRAWITEMSTRUCT* draw, const WCHAR* label, boolean accent) {
     HBRUSH brush;
-    COLORREF background = (draw->itemState & ODS_SELECTED) ? RGB(54, 54, 60) : RGB(38, 38, 43);
-    COLORREF border = accent ? RGB(88, 166, 255) : RGB(74, 74, 82);
+    HPEN pen;
+    HGDIOBJ oldBrush;
+    HGDIOBJ oldPen;
+    RECT textRect = draw->rcItem;
+    COLORREF background = (draw->itemState & ODS_SELECTED) ? UI_PANEL_HOVER : UI_PANEL;
+    COLORREF border = accent ? UI_ACCENT : UI_BORDER;
 
     brush = CreateSolidBrush(background);
-    FillRect(draw->hDC, &draw->rcItem, brush);
-    DeleteObject(brush);
-
-    brush = CreateSolidBrush(border);
-    FrameRect(draw->hDC, &draw->rcItem, brush);
+    pen = CreatePen(PS_SOLID, 1, border);
+    oldBrush = SelectObject(draw->hDC, brush);
+    oldPen = SelectObject(draw->hDC, pen);
+    RoundRect(draw->hDC, draw->rcItem.left, draw->rcItem.top, draw->rcItem.right, draw->rcItem.bottom, 8, 8);
+    SelectObject(draw->hDC, oldPen);
+    SelectObject(draw->hDC, oldBrush);
+    DeleteObject(pen);
     DeleteObject(brush);
 
     SetBkMode(draw->hDC, TRANSPARENT);
-    SetTextColor(draw->hDC, RGB(245, 245, 248));
-    DrawTextW(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SetTextColor(draw->hDC, UI_TEXT);
+    InflateRect(&textRect, -8, 0);
+    DrawTextW(draw->hDC, label, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 static DWORD getCurrentModifiers(App* self) {
@@ -727,14 +801,7 @@ static void finishHotkeyRecording(DWORD modifiers) {
 static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
     switch (msg) {
         case WM_CREATE:
-            {
-                BOOL dark = true;
-                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &dark, sizeof(dark));
-            }
-
-            if (!alphaDarkBrush)
-                alphaDarkBrush = CreateSolidBrush(RGB(24, 24, 27));
+            ensureUiResources();
 
             CreateWindowW(L"STATIC", tr(STR_HOTKEY_APPLY), WS_VISIBLE | WS_CHILD, 22, 24, 118, 20, hwnd, null, null, null);
             CreateWindowW(L"STATIC", L"", WS_VISIBLE | WS_CHILD, 142, 24, 190, 20, hwnd, (HMENU)ID_HOTKEY_APPLY_LABEL, null, null);
@@ -758,6 +825,7 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
 
             hotkeyDialogWindow = hwnd;
             updateHotkeyDialogLabels();
+            polishDialog(hwnd);
             return 0;
 
         case WM_ERASEBKGND: {
@@ -771,8 +839,8 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
             return (LRESULT)alphaDarkBrush;
 
         case WM_CTLCOLORSTATIC:
-            SetTextColor((HDC)w, RGB(245, 245, 248));
-            SetBkColor((HDC)w, RGB(24, 24, 27));
+            SetTextColor((HDC)w, UI_TEXT);
+            SetBkColor((HDC)w, UI_BG);
             return (LRESULT)alphaDarkBrush;
 
         case WM_DRAWITEM:
@@ -877,14 +945,7 @@ static boolean askHotkeys(HWND owner, Settings* settings) {
 static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
     switch (msg) {
         case WM_CREATE:
-            {
-                BOOL dark = true;
-                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &dark, sizeof(dark));
-            }
-
-            if (!alphaDarkBrush)
-                alphaDarkBrush = CreateSolidBrush(RGB(24, 24, 27));
+            ensureUiResources();
 
             CreateWindowW(L"STATIC", tr(STR_CONFIRM_QUESTION), WS_VISIBLE | WS_CHILD | SS_CENTER,
                 24, 30, 252, 24, hwnd, null, null, null);
@@ -898,6 +959,7 @@ static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM 
                 transparency.apply(&transparency, hwnd, confirmDialogAlpha);
                 transparency.refresh(&transparency, hwnd);
             }
+            polishDialog(hwnd);
             return 0;
 
         case WM_ERASEBKGND: {
@@ -911,8 +973,8 @@ static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM 
             return (LRESULT)alphaDarkBrush;
 
         case WM_CTLCOLORSTATIC:
-            SetTextColor((HDC)w, RGB(245, 245, 248));
-            SetBkColor((HDC)w, RGB(24, 24, 27));
+            SetTextColor((HDC)w, UI_TEXT);
+            SetBkColor((HDC)w, UI_BG);
             return (LRESULT)alphaDarkBrush;
 
         case WM_DRAWITEM:
@@ -1015,6 +1077,29 @@ static boolean isAutoTarget(App* self, HWND hwnd) {
     return self->transparency.isTarget(&self->transparency, hwnd);
 }
 
+static boolean isPopupMenuWindow(HWND hwnd) {
+    char cls[128];
+    LONG exStyle;
+    LONG style;
+
+    if (!IsWindow(hwnd))
+        return false;
+
+    GetClassNameA(hwnd, cls, sizeof(cls));
+    if (!strcmp(cls, "#32768"))
+        return true;
+
+    exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+    style = GetWindowLong(hwnd, GWL_STYLE);
+
+    if (!(style & WS_POPUP) || (exStyle & WS_EX_APPWINDOW))
+        return false;
+
+    return strstr(cls, "Popup") ||
+        strstr(cls, "Flyout") ||
+        strstr(cls, "Menu");
+}
+
 static BYTE getCurrentAlpha(App* self) {
     if (self->settings.preset == PRESET_CUSTOM)
         return self->settings.customAlpha;
@@ -1022,11 +1107,48 @@ static BYTE getCurrentAlpha(App* self) {
     return self->transparency.presetToAlpha(&self->transparency, self->settings.preset);
 }
 
+static void applyPopupTransparency(App* self, HWND hwnd) {
+    BYTE alpha;
+
+    if (!self || !self->settings.popupTransparency || !isPopupMenuWindow(hwnd))
+        return;
+
+    alpha = getCurrentAlpha(self);
+    self->transparency.apply(&self->transparency, hwnd, alpha);
+    self->transparency.refresh(&self->transparency, hwnd);
+}
+
+static BOOL CALLBACK applyPopupTransparencyWindow(HWND hwnd, LPARAM lParam) {
+    App* self = (App*)lParam;
+
+    if (IsWindowVisible(hwnd))
+        applyPopupTransparency(self, hwnd);
+
+    return true;
+}
+
+static void applyPopupTransparencyAll(App* self) {
+    if (!self || !self->settings.popupTransparency)
+        return;
+
+    EnumWindows(applyPopupTransparencyWindow, (LPARAM)self);
+}
+
+static void schedulePopupTransparencyScan(App* self) {
+    if (!self || !self->settings.popupTransparency || !self->trayWindow)
+        return;
+
+    applyPopupTransparencyAll(self);
+    popupRetryRemaining = POPUP_RETRY_LIMIT;
+    SetTimer(self->trayWindow, POPUP_RETRY_TIMER_ID, 40, null);
+}
+
 static void showStatusMenu(HWND owner, POINT point, const WCHAR* message) {
     HMENU menu = CreatePopupMenu();
-    HBRUSH menuBrush = CreateSolidBrush(RGB(32, 32, 36));
+    HBRUSH menuBrush = CreateSolidBrush(UI_MENU_BG);
     MENUINFO menuInfo = {0};
 
+    ensureUiResources();
     resetMenuItems();
 
     menuInfo.cbSize = sizeof(menuInfo);
@@ -1054,16 +1176,7 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
 
     switch (msg) {
         case WM_CREATE:
-            {
-                BOOL dark = true;
-                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &dark, sizeof(dark));
-            }
-
-            if (!alphaDarkBrush)
-                alphaDarkBrush = CreateSolidBrush(RGB(24, 24, 27));
-            if (!alphaEditBrush)
-                alphaEditBrush = CreateSolidBrush(RGB(38, 38, 43));
+            ensureUiResources();
 
             CreateWindowW(L"STATIC", tr(STR_CUSTOM_ALPHA), WS_VISIBLE | WS_CHILD, 18, 14, 150, 20, hwnd, null, null, null);
 
@@ -1085,6 +1198,7 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
                 178, 150, 82, 28, hwnd, (HMENU)ID_ALPHA_CANCEL, null, null);
 
             applyAlphaPreview(hwnd);
+            polishDialog(hwnd);
 
             SetFocus(slider);
             return 0;
@@ -1100,34 +1214,19 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
             return (LRESULT)alphaDarkBrush;
 
         case WM_CTLCOLORSTATIC:
-            SetTextColor((HDC)w, RGB(235, 235, 240));
-            SetBkColor((HDC)w, RGB(24, 24, 27));
+            SetTextColor((HDC)w, UI_TEXT);
+            SetBkColor((HDC)w, UI_BG);
             return (LRESULT)alphaDarkBrush;
 
         case WM_CTLCOLOREDIT:
-            SetTextColor((HDC)w, RGB(245, 245, 248));
-            SetBkColor((HDC)w, RGB(38, 38, 43));
+            SetTextColor((HDC)w, UI_TEXT);
+            SetBkColor((HDC)w, UI_PANEL);
             return (LRESULT)alphaEditBrush;
 
         case WM_DRAWITEM:
             if (w == ID_ALPHA_OK || w == ID_ALPHA_CANCEL) {
-                DRAWITEMSTRUCT* draw = (DRAWITEMSTRUCT*)l;
-                HBRUSH brush;
-                COLORREF background = (draw->itemState & ODS_SELECTED) ? RGB(54, 54, 60) : RGB(38, 38, 43);
-                COLORREF border = (w == ID_ALPHA_OK) ? RGB(88, 166, 255) : RGB(74, 74, 82);
                 const WCHAR* label = (w == ID_ALPHA_OK) ? tr(STR_OK) : tr(STR_CANCEL);
-
-                brush = CreateSolidBrush(background);
-                FillRect(draw->hDC, &draw->rcItem, brush);
-                DeleteObject(brush);
-
-                brush = CreateSolidBrush(border);
-                FrameRect(draw->hDC, &draw->rcItem, brush);
-                DeleteObject(brush);
-
-                SetBkMode(draw->hDC, TRANSPARENT);
-                SetTextColor(draw->hDC, RGB(245, 245, 248));
-                DrawTextW(draw->hDC, label, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                drawDarkButton((DRAWITEMSTRUCT*)l, label, w == ID_ALPHA_OK);
                 return true;
             }
             break;
@@ -1289,6 +1388,89 @@ static void applyExplorerAutoAll(App* self) {
     EnumWindows(applyExplorerAutoWindow, (LPARAM)self);
 }
 
+static void drawTrayMenuItem(DRAWITEMSTRUCT* draw, MenuItemData* item) {
+    RECT rect = draw->rcItem;
+    RECT fillRect = rect;
+    RECT textRect = rect;
+    HBRUSH brush;
+    HPEN pen;
+    HGDIOBJ oldBrush;
+    HGDIOBJ oldPen;
+    HGDIOBJ oldFont = null;
+    boolean selected = (draw->itemState & ODS_SELECTED) ? true : false;
+    boolean disabled = (draw->itemState & ODS_DISABLED) ? true : false;
+
+    if (uiFont)
+        oldFont = SelectObject(draw->hDC, uiFont);
+
+    brush = CreateSolidBrush(UI_MENU_BG);
+    FillRect(draw->hDC, &rect, brush);
+    DeleteObject(brush);
+
+    if (item->separator) {
+        RECT line = rect;
+        line.left += 14;
+        line.right -= 14;
+        line.top += (line.bottom - line.top) / 2;
+        line.bottom = line.top + 1;
+        brush = CreateSolidBrush(UI_BORDER);
+        FillRect(draw->hDC, &line, brush);
+        DeleteObject(brush);
+        if (oldFont)
+            SelectObject(draw->hDC, oldFont);
+        return;
+    }
+
+    if (selected && !disabled) {
+        InflateRect(&fillRect, -5, -3);
+        brush = CreateSolidBrush(UI_MENU_HOVER);
+        pen = CreatePen(PS_SOLID, 1, UI_MENU_HOVER);
+        oldBrush = SelectObject(draw->hDC, brush);
+        oldPen = SelectObject(draw->hDC, pen);
+        RoundRect(draw->hDC, fillRect.left, fillRect.top, fillRect.right, fillRect.bottom, 8, 8);
+        SelectObject(draw->hDC, oldPen);
+        SelectObject(draw->hDC, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+
+    if (item->checked) {
+        RECT mark = rect;
+        mark.left += 11;
+        mark.right = mark.left + 12;
+        mark.top += 10;
+        mark.bottom = mark.top + 12;
+
+        brush = CreateSolidBrush(UI_ACCENT);
+        pen = CreatePen(PS_SOLID, 1, UI_ACCENT);
+        oldBrush = SelectObject(draw->hDC, brush);
+        oldPen = SelectObject(draw->hDC, pen);
+        Ellipse(draw->hDC, mark.left, mark.top, mark.right, mark.bottom);
+        SelectObject(draw->hDC, oldPen);
+        SelectObject(draw->hDC, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, disabled ? UI_MUTED : UI_MENU_TEXT);
+
+    textRect.left += 34;
+    textRect.right -= item->submenu ? 28 : 14;
+    DrawTextW(draw->hDC, item->text, -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+
+    if (item->submenu) {
+        RECT arrowRect = rect;
+        arrowRect.left = arrowRect.right - 22;
+        arrowRect.right -= 8;
+        SetTextColor(draw->hDC, UI_MUTED);
+        DrawTextW(draw->hDC, L">", -1, &arrowRect, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    }
+
+    if (oldFont)
+        SelectObject(draw->hDC, oldFont);
+}
+
 static void CALLBACK winEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG obj, LONG child, DWORD tid, DWORD time) {
     char cls[128];
     App* self = appContext;
@@ -1302,6 +1484,16 @@ static void CALLBACK winEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd
         return;
 
     GetClassNameA(hwnd, cls, sizeof(cls));
+
+    if (event == EVENT_SYSTEM_MENUPOPUPSTART) {
+        schedulePopupTransparencyScan(self);
+        return;
+    }
+
+    if (obj == OBJID_WINDOW && isPopupMenuWindow(hwnd)) {
+        schedulePopupTransparencyScan(self);
+        return;
+    }
 
     if (obj == OBJID_WINDOW && IsWindowVisible(hwnd) && isAutoTarget(self, hwnd)) {
         if (!strcmp(cls, "TaskSwitcherWnd") || !strcmp(cls, "MultitaskingViewFrame"))
@@ -1323,8 +1515,6 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
     MEASUREITEMSTRUCT* measure;
     DRAWITEMSTRUCT* draw;
     MenuItemData* item;
-    HBRUSH brush;
-    RECT textRect;
     SIZE size;
 
     if (!self)
@@ -1336,11 +1526,18 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
         if (measure->CtlType == ODT_MENU && item) {
             HDC dc = GetDC(hwnd);
+            HGDIOBJ oldFont = null;
+
+            ensureUiResources();
+            if (uiFont)
+                oldFont = SelectObject(dc, uiFont);
             GetTextExtentPoint32W(dc, item->text, (int)wcslen(item->text), &size);
+            if (oldFont)
+                SelectObject(dc, oldFont);
             ReleaseDC(hwnd, dc);
 
-            measure->itemWidth = size.cx + 52;
-            measure->itemHeight = 26;
+            measure->itemWidth = item->separator ? 180 : size.cx + 72;
+            measure->itemHeight = item->separator ? 11 : 32;
             return true;
         }
     }
@@ -1350,36 +1547,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         item = (MenuItemData*)draw->itemData;
 
         if (draw->CtlType == ODT_MENU && item) {
-            boolean selected = (draw->itemState & ODS_SELECTED) ? true : false;
-            brush = CreateSolidBrush(selected ? RGB(54, 54, 60) : RGB(32, 32, 36));
-            FillRect(draw->hDC, &draw->rcItem, brush);
-            DeleteObject(brush);
-
-            SetBkMode(draw->hDC, TRANSPARENT);
-            SetTextColor(draw->hDC, RGB(238, 238, 242));
-
-            textRect = draw->rcItem;
-            textRect.left += 28;
-            textRect.right -= 20;
-            DrawTextW(draw->hDC, item->text, -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
-
-            if (item->checked) {
-                RECT checkRect = draw->rcItem;
-                checkRect.left += 8;
-                checkRect.right = checkRect.left + 10;
-                checkRect.top += 8;
-                checkRect.bottom -= 8;
-                brush = CreateSolidBrush(RGB(120, 190, 255));
-                FillRect(draw->hDC, &checkRect, brush);
-                DeleteObject(brush);
-            }
-
-            if (item->submenu) {
-                RECT arrowRect = draw->rcItem;
-                arrowRect.left = arrowRect.right - 18;
-                DrawTextW(draw->hDC, L">", -1, &arrowRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
-            }
-
+            drawTrayMenuItem(draw, item);
             return true;
         }
     }
@@ -1401,14 +1569,26 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         return 0;
     }
 
+    if (msg == WM_TIMER && w == POPUP_RETRY_TIMER_ID) {
+        applyPopupTransparencyAll(self);
+
+        if (--popupRetryRemaining <= 0) {
+            popupRetryRemaining = 0;
+            KillTimer(hwnd, POPUP_RETRY_TIMER_ID);
+        }
+
+        return 0;
+    }
+
     if (msg == WM_TRAY && isTrayContextMenu(l)) {
         HMENU root = CreatePopupMenu();
         HMENU setting = CreatePopupMenu();
         HMENU preset  = CreatePopupMenu();
         HMENU language = CreatePopupMenu();
-        HBRUSH menuBrush = CreateSolidBrush(RGB(32, 32, 36));
+        HBRUSH menuBrush = CreateSolidBrush(UI_MENU_BG);
         MENUINFO menuInfo = {0};
         LanguageMode displayLanguage = effectiveLanguage(self);
+        ensureUiResources();
         resetMenuItems();
 
         menuInfo.cbSize = sizeof(menuInfo);
@@ -1421,9 +1601,10 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
         appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, tr(STR_APP_NAME), false, false);
         appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, tr(STR_LICENSE), false, false);
-        AppendMenuW(root, MF_SEPARATOR, 0, null);
+        appendDarkSeparator(root);
 
         appendDarkMenu(setting, MF_STRING, ID_SETTING_EXPLORER, tr(STR_EXPLORER_AUTO), self->settings.explorerAuto, false);
+        appendDarkMenu(setting, MF_STRING, ID_SETTING_POPUPS, tr(STR_POPUP_TRANSPARENCY), self->settings.popupTransparency, false);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_STARTUP, tr(STR_RUN_AT_STARTUP), self->settings.startupEnabled, false);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_HOTKEYS, tr(STR_HOTKEYS), false, false);
         (void)displayLanguage;
@@ -1440,17 +1621,17 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         appendDarkMenu(preset, MF_STRING, ID_PRESET_CUSTOM, tr(STR_CUSTOM_ALPHA), self->settings.preset == PRESET_CUSTOM, false);
 
         appendDarkMenu(setting, MF_POPUP, (UINT_PTR)preset, tr(STR_PRESET), false, true);
-        AppendMenuW(setting, MF_SEPARATOR, 0, null);
+        appendDarkSeparator(setting);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_UNINSTALL, tr(STR_UNINSTALL), false, false);
         appendDarkMenu(root, MF_POPUP, (UINT_PTR)setting, tr(STR_SETTING), false, true);
 
-        AppendMenuW(root, MF_SEPARATOR, 0, null);
+        appendDarkSeparator(root);
         appendDarkMenu(root, MF_STRING, ID_UPDATE_CHECK, tr(STR_CHECK_FOR_UPDATES), false, false);
         appendDarkMenu(root, MF_STRING, ID_LOG_OPEN, tr(STR_OPEN_LOG), false, false);
-        AppendMenuW(root, MF_SEPARATOR, 0, null);
+        appendDarkSeparator(root);
         appendDarkMenu(root, MF_STRING | MF_DISABLED, 1, tr(STR_DEVELOPED_BY), false, false);
         appendDarkMenu(root, MF_STRING, 2, L"GitHub", false, false);
-        AppendMenuW(root, MF_SEPARATOR, 0, null);
+        appendDarkSeparator(root);
         appendDarkMenu(root, MF_STRING, 3, tr(STR_EXIT), false, false);
 
         POINT p;
@@ -1479,6 +1660,11 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 self->settings.explorerAuto = !self->settings.explorerAuto;
                 self->settings.save(&self->settings);
                 self->applyExplorerAutoAll(self);
+                break;
+
+            case ID_SETTING_POPUPS:
+                self->settings.popupTransparency = !self->settings.popupTransparency;
+                self->settings.save(&self->settings);
                 break;
 
             case ID_SETTING_STARTUP:
@@ -1573,6 +1759,9 @@ static LRESULT CALLBACK keyboardHook(int code, WPARAM w, LPARAM l) {
     const boolean down = (w == WM_KEYDOWN || w == WM_SYSKEYDOWN);
     const boolean up   = (w == WM_KEYUP   || w == WM_SYSKEYUP);
 
+    if (down && (k->vkCode == VK_APPS || (k->vkCode == VK_F10 && (GetAsyncKeyState(VK_SHIFT) & 0x8000))))
+        schedulePopupTransparencyScan(self);
+
     if (k->vkCode == VK_CONTROL || k->vkCode == VK_LCONTROL || k->vkCode == VK_RCONTROL) {
         if (down) self->ctrlDown = true;
         else if (up) self->ctrlDown = false;
@@ -1638,6 +1827,9 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
         return CallNextHookEx(null, code, w, l);
 
     DWORD modifiers = getCurrentModifiers(self);
+
+    if (w == WM_RBUTTONUP)
+        schedulePopupTransparencyScan(self);
 
     if (hotkeyRecordingAction != HOTKEY_ACTION_NONE) {
         if ((w == WM_MBUTTONDOWN && hotkeyRecordingAction != HOTKEY_ACTION_ADJUST) ||
@@ -1715,6 +1907,7 @@ static void run(App* self) {
     addTrayIcon(self);
 
     self->winEventHook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, null, winEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
+    self->popupEventHook = SetWinEventHook(EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUPOPUPSTART, null, winEventCallback, 0, 0, WINEVENT_OUTOFCONTEXT);
     self->keyHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardHook, null, 0);
     self->mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseHook, null, 0);
 
@@ -1725,9 +1918,11 @@ static void run(App* self) {
     }
 
     KillTimer(self->trayWindow, TRAY_RETRY_TIMER_ID);
+    KillTimer(self->trayWindow, POPUP_RETRY_TIMER_ID);
     removeTrayIcon(self);
 
     if (self->winEventHook) UnhookWinEvent(self->winEventHook);
+    if (self->popupEventHook) UnhookWinEvent(self->popupEventHook);
     if (self->keyHook) UnhookWindowsHookEx(self->keyHook);
     if (self->mouseHook) UnhookWindowsHookEx(self->mouseHook);
 
@@ -1748,6 +1943,7 @@ App new_App(void) {
         .keyHook = null,
         .mouseHook = null,
         .winEventHook = null,
+        .popupEventHook = null,
         .trayWindow = null,
         .trayIconAdded = false,
         .taskbarCreatedMessage = 0,

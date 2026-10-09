@@ -5,6 +5,7 @@
 
 static void reset(Settings* self) {
     self->explorerAuto = true;
+    self->popupTransparency = true;
     self->startupEnabled = true;
     self->preset = PRESET_GLASS;
     self->customAlpha = 150;
@@ -47,6 +48,10 @@ static void load(Settings* self) {
         self->explorerAuto = (boolean)val;
 
     size = sizeof(DWORD);
+    if (RegQueryValueExA(key, "PopupTransparency", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
+        self->popupTransparency = (boolean)val;
+
+    size = sizeof(DWORD);
     if (RegQueryValueExA(key, "StartupEnabled", NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
         self->startupEnabled = (boolean)val;
 
@@ -84,6 +89,7 @@ static void save(Settings* self) {
         return;
 
     DWORD explorer = self->explorerAuto;
+    DWORD popupTransparency = self->popupTransparency;
     DWORD startup = self->startupEnabled;
     DWORD preset = self->preset;
     DWORD customAlpha = self->customAlpha;
@@ -93,6 +99,7 @@ static void save(Settings* self) {
     DWORD language = self->language;
 
     RegSetValueExA(key, "ExplorerAuto", 0, REG_DWORD, (BYTE*)&explorer, sizeof(DWORD));
+    RegSetValueExA(key, "PopupTransparency", 0, REG_DWORD, (BYTE*)&popupTransparency, sizeof(DWORD));
     RegSetValueExA(key, "StartupEnabled", 0, REG_DWORD, (BYTE*)&startup, sizeof(DWORD));
     RegSetValueExA(key, "Preset", 0, REG_DWORD, (BYTE*)&preset, sizeof(DWORD));
     RegSetValueExA(key, "CustomAlpha", 0, REG_DWORD, (BYTE*)&customAlpha, sizeof(DWORD));
