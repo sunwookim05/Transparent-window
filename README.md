@@ -1,6 +1,6 @@
 # System Transparency
 
-🌍 [English](https://github.com/sunwookim05/Transparent-window/blob/main/README.md) | [한국어](https://github.com/sunwookim05/Transparent-window/blob/main/translations/ko.md)
+[English](https://github.com/sunwookim05/Transparent-window/blob/main/README.md) | [Korean](https://github.com/sunwookim05/Transparent-window/blob/main/translations/ko.md)
 
 System Transparency is a lightweight Windows tray utility that makes Explorer and selected system windows feel cleaner by applying adjustable transparency in real time.
 
@@ -16,13 +16,13 @@ It is written in C with the Win32 API. The app is distributed as a single execut
 
 ## Features
 
-- Automatic Explorer transparency for supported Windows Explorer and menu windows.
-- Manual transparency toggle with configurable hotkeys:
+- Automatic Explorer transparency for supported Windows Explorer and shell windows.
+- Manual transparency controls with configurable hotkeys:
   - default `Ctrl + Middle Click`: apply the selected preset to the active window.
   - default `Win + Middle Click`: restore the active window to full opacity.
   - default `Ctrl + Win + Mouse Wheel`: adjust the active window opacity step by step.
-- Tray menu with dark owner-drawn styling.
-- Optional popup menu transparency for tray and Windows context menus.
+- Dark owner-drawn tray menu with compact popup panels for common settings.
+- Optional popup/context menu transparency, enabled by default.
 - English and Korean UI language support.
 - Transparency presets:
   - `Solid`: 255
@@ -30,11 +30,12 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - `Glass`: 150
   - `Ghost`: 80
   - `Custom Alpha`: user-defined value from 60 to 255.
-- Custom Alpha dialog with:
+- Custom Alpha popup panel with:
   - dark UI
   - draggable slider
   - live numeric value
   - live preview on the selected window while adjusting.
+- Hotkey popup panel for recording shortcut modifiers.
 - Dark uninstall confirmation dialog from the tray settings menu.
 - Single-exe first-run setup:
   - copies itself to `%LOCALAPPDATA%\SystemTransparency\SystemTransparency.exe`
@@ -62,12 +63,12 @@ The app then runs from the system tray and automatically starts on future logins
 Right-click the tray icon to open the menu.
 
 - `Setting > Explorer Auto Transparency`: enable or disable automatic transparency for supported Explorer windows.
-- `Setting > Popup Menu Transparency`: enable or disable transparency for popup/context menus.
+- `Setting > Popup Menu Transparency`: enable or disable best-effort transparency for popup/context menus.
 - `Setting > Run at Startup`: enable or disable the startup scheduled task.
-- `Setting > Hotkeys...`: record the modifier keys used for the manual transparency shortcuts.
+- `Setting > Hotkeys...`: open a compact popup panel to record the modifier keys used for the manual transparency shortcuts.
 - `Setting > Language`: choose System default, English, or Korean.
 - `Setting > Preset`: choose the transparency level used by automatic mode and the apply-preset shortcut.
-- `Setting > Preset > Custom Alpha...`: choose a custom opacity value from 60 to 255.
+- `Setting > Preset > Custom Alpha...`: open a compact slider popup to choose a custom opacity value from 60 to 255.
 - `Setting > Uninstall`: remove the installed executable, startup task, app registry settings, and bundled certificate registration.
 - `Check for Updates`: manually check the latest GitHub Release.
 - `Open Log`: open the updater log file.

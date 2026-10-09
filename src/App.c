@@ -306,6 +306,39 @@ static void centerWindow(HWND window) {
     SetWindowPos(window, null, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+static void positionPopupWindow(HWND window, POINT anchor) {
+    RECT rect;
+    RECT work;
+    HMONITOR monitor;
+    MONITORINFO info;
+    int width;
+    int height;
+    int x;
+    int y;
+
+    GetWindowRect(window, &rect);
+    width = rect.right - rect.left;
+    height = rect.bottom - rect.top;
+
+    monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+    info.cbSize = sizeof(info);
+
+    if (GetMonitorInfoA(monitor, &info))
+        work = info.rcWork;
+    else
+        SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0);
+
+    x = anchor.x + 8;
+    y = anchor.y + 8;
+
+    if (x + width > work.right) x = anchor.x - width - 8;
+    if (y + height > work.bottom) y = anchor.y - height - 8;
+    if (x < work.left) x = work.left;
+    if (y < work.top) y = work.top;
+
+    SetWindowPos(window, null, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+}
+
 static void applyAlphaPreview(HWND dialog) {
     Transparency transparency = new_Transparency();
 
@@ -880,6 +913,17 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
             }
             break;
 
+        case WM_KEYDOWN:
+            if (w == VK_ESCAPE) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            if (w == VK_RETURN) {
+                SendMessage(hwnd, WM_COMMAND, ID_HOTKEY_OK, 0);
+                return 0;
+            }
+            break;
+
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
@@ -898,6 +942,7 @@ static boolean askHotkeys(HWND owner, Settings* settings) {
     WNDCLASSA wc = {0};
     HWND window;
     MSG msg;
+    POINT point;
 
     hotkeyDialogApplyModifiers = settings->applyModifiers;
     hotkeyDialogRestoreModifiers = settings->restoreModifiers;
@@ -910,14 +955,16 @@ static boolean askHotkeys(HWND owner, Settings* settings) {
     wc.lpszClassName = "HotkeySettingsWindow";
     RegisterClassA(&wc);
 
-    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
-        WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 450, 240,
+    GetCursorPos(&point);
+
+    window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
+        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 450, 220,
         owner, null, wc.hInstance, null);
 
     if (!window)
         return false;
 
-    centerWindow(window);
+    positionPopupWindow(window, point);
     SetWindowTextW(window, tr(STR_HOTKEYS));
     EnableWindow(owner, false);
     ShowWindow(window, SW_SHOWNORMAL);
@@ -1242,6 +1289,17 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
             }
             break;
 
+        case WM_KEYDOWN:
+            if (w == VK_ESCAPE) {
+                SendMessage(hwnd, WM_COMMAND, ID_ALPHA_CANCEL, 0);
+                return 0;
+            }
+            if (w == VK_RETURN) {
+                SendMessage(hwnd, WM_COMMAND, ID_ALPHA_OK, 0);
+                return 0;
+            }
+            break;
+
         case WM_CLOSE:
             if (alphaPreviewWindow) {
                 Transparency transparency = new_Transparency();
@@ -1289,14 +1347,14 @@ static boolean askAlpha(HWND owner, BYTE* alpha) {
     wc.lpszClassName = "AlphaInputWindow";
     RegisterClassA(&wc);
 
-    window = CreateWindowExA(WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
-        WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 350, 230,
+    window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
+        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 350, 205,
         owner, null, wc.hInstance, null);
 
     if (!window)
         return false;
 
-    centerWindow(window);
+    positionPopupWindow(window, point);
     SetWindowTextW(window, tr(STR_CUSTOM_ALPHA));
     EnableWindow(owner, false);
     ShowWindow(window, SW_SHOWNORMAL);
