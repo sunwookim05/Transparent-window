@@ -31,18 +31,24 @@ static BYTE getWindowAlpha(Transparency* self, HWND hwnd) {
     if (!GetLayeredWindowAttributes(hwnd, NULL, &alpha, &flags))
         return ALPHA_OPAQUE;
 
-    return alpha;
+    return (flags & LWA_ALPHA) ? alpha : ALPHA_OPAQUE;
 }
 
 static boolean apply(Transparency* self, HWND hwnd, BYTE alpha) {
     if (!IsWindow(hwnd)) return false;
 
     LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
-    if (!(ex & WS_EX_LAYERED))
-        SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
-
-    if (self->getWindowAlpha(self, hwnd) == alpha)
-        return true;
+    if (!(ex & WS_EX_LAYERED)) {
+        SetLastError(0);
+        if (!SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED) && GetLastError())
+            return false;
+    } else {
+        BYTE currentAlpha;
+        DWORD flags;
+        if (GetLayeredWindowAttributes(hwnd, NULL, &currentAlpha, &flags) &&
+            (flags & LWA_ALPHA) && self->getWindowAlpha(self, hwnd) == alpha)
+            return true;
+    }
 
     return SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
 }

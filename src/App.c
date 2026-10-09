@@ -20,6 +20,11 @@
 #define TRAY_ID 1
 #define TRAY_RETRY_TIMER_ID 100
 #define TRAY_STATUS_TIMER_ID 101
+#define TRAY_MENU_TIMER_ID 102
+#define ID_INLINE_ALPHA 1400
+#define ID_INLINE_APPLY 1401
+#define ID_INLINE_RESTORE 1402
+#define ID_INLINE_ADJUST 1403
 
 #define ID_SETTING_EXPLORER  10
 #define ID_SETTING_STARTUP   11
@@ -80,27 +85,23 @@
 #define UI_MENU_TEXT RGB(238, 238, 242)
 
 static App* appContext = null;
-static BYTE alphaDialogValue = 150;
-static boolean alphaDialogOk = false;
-static HWND alphaPreviewWindow = null;
-static BYTE alphaPreviewOriginal = ALPHA_OPAQUE;
-static boolean alphaControlsUpdating = false;
 static HBRUSH alphaDarkBrush = null;
 static HBRUSH alphaEditBrush = null;
 static HFONT uiFont = null;
 static boolean confirmDialogOk = false;
 static BYTE confirmDialogAlpha = ALPHA_OPAQUE;
 static boolean statusMenuOpen = false;
-static HWND hotkeyDialogWindow = null;
-static DWORD hotkeyDialogApplyModifiers = HOTKEY_MOD_CTRL;
-static DWORD hotkeyDialogRestoreModifiers = HOTKEY_MOD_WIN;
-static DWORD hotkeyDialogAdjustModifiers = HOTKEY_MOD_CTRL | HOTKEY_MOD_WIN;
-static int hotkeyRecordingAction = HOTKEY_ACTION_NONE;
 
-static HWND trayPopupWindow = null;
-static HFONT trayHeadingFont = null;
 
-static HBRUSH trayPanelBrush = null;
+static HMENU inlineAlphaMenu = null;
+static HMENU inlineKeysMenu = null;
+static HWND inlineMenuWindow = null;
+static int inlineRecordingAction = HOTKEY_ACTION_NONE;
+static boolean inlineDragging = false;
+static HMENU selectedInlineMenu = null;
+static UINT selectedInlineItem = 0;
+static DWORD recordedModifierKeys = 0;
+#define WM_INLINE_START (WM_USER + 4)
 
 
 typedef struct {
@@ -108,6 +109,7 @@ typedef struct {
     boolean checked;
     boolean submenu;
     boolean separator;
+    UINT id;
 } MenuItemData;
 
 static MenuItemData menuItems[64];
@@ -128,11 +130,14 @@ static MenuItemData* newMenuItem(const WCHAR* text, boolean checked, boolean sub
     item->checked = checked;
     item->submenu = submenu;
     item->separator = separator;
+    item->id = 0;
     return item;
 }
 
 static void appendDarkMenu(HMENU menu, UINT flags, UINT_PTR id, const WCHAR* text, boolean checked, boolean submenu) {
-    AppendMenuW(menu, flags | MF_OWNERDRAW, id, (LPCWSTR)newMenuItem(text, checked, submenu, false));
+    MenuItemData* item = newMenuItem(text, checked, submenu, false);
+    if (item) item->id = submenu ? 0 : (UINT)id;
+    AppendMenuW(menu, flags | MF_OWNERDRAW, id, (LPCWSTR)item);
 }
 
 static void appendDarkSeparator(HMENU menu) {
@@ -209,7 +214,7 @@ static const WCHAR* textFor(LanguageMode language, StringId id) {
         case STR_EXPLORER_AUTO: return ko ? L"Explorer 자동 투명화" : L"Explorer Auto Transparency";
         case STR_POPUP_TRANSPARENCY: return ko ? L"팝업 메뉴 투명화" : L"Popup Menu Transparency";
         case STR_RUN_AT_STARTUP: return ko ? L"시작 시 실행" : L"Run at Startup";
-        case STR_HOTKEYS: return ko ? L"단축키..." : L"Hotkeys...";
+        case STR_HOTKEYS: return ko ? L"단축키" : L"Hotkeys";
         case STR_LANGUAGE: return ko ? L"언어" : L"Language";
         case STR_LANGUAGE_SYSTEM: return ko ? L"시스템 기본값" : L"System default";
         case STR_LANGUAGE_ENGLISH: return L"English";
@@ -222,7 +227,7 @@ static const WCHAR* textFor(LanguageMode language, StringId id) {
         case STR_PRESET_SOFT: return ko ? L"부드럽게" : L"Soft";
         case STR_PRESET_GLASS: return ko ? L"유리" : L"Glass";
         case STR_PRESET_GHOST: return ko ? L"희미하게" : L"Ghost";
-        case STR_CUSTOM_ALPHA: return ko ? L"사용자 지정 투명도..." : L"Custom Alpha...";
+        case STR_CUSTOM_ALPHA: return ko ? L"사용자 지정 투명도" : L"Custom Alpha";
         case STR_CHECK_FOR_UPDATES: return ko ? L"업데이트 확인" : L"Check for Updates";
         case STR_OPEN_LOG: return ko ? L"로그 열기" : L"Open Log";
         case STR_DEVELOPED_BY: return ko ? L"sunwookim05 제작" : L"Developed by sunwookim05";
@@ -315,195 +320,6 @@ static void centerWindow(HWND window) {
     y = work.top + ((work.bottom - work.top) - height) / 2;
 
     SetWindowPos(window, null, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-}
-
-static void positionPopupWindow(HWND window, POINT anchor) {
-    RECT rect;
-    RECT work;
-    HMONITOR monitor;
-    MONITORINFO info;
-    int width;
-    int height;
-    int x;
-    int y;
-
-    GetWindowRect(window, &rect);
-    width = rect.right - rect.left;
-    height = rect.bottom - rect.top;
-
-    monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
-    info.cbSize = sizeof(info);
-
-    if (GetMonitorInfoA(monitor, &info))
-        work = info.rcWork;
-    else
-        SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0);
-
-    x = anchor.x + 8;
-    y = anchor.y + 8;
-
-    if (x + width > work.right) x = anchor.x - width - 8;
-    if (y + height > work.bottom) y = anchor.y - height - 8;
-    if (x < work.left) x = work.left;
-    if (y < work.top) y = work.top;
-
-    SetWindowPos(window, null, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-}
-
-static void applyAlphaPreview(HWND dialog) {
-    Transparency transparency = new_Transparency();
-
-    transparency.apply(&transparency, dialog, alphaDialogValue);
-    transparency.refresh(&transparency, dialog);
-
-    if (alphaPreviewWindow) {
-        transparency.apply(&transparency, alphaPreviewWindow, alphaDialogValue);
-        transparency.refresh(&transparency, alphaPreviewWindow);
-    }
-}
-
-static BYTE sliderPointToAlpha(HWND slider, int y) {
-    RECT rect;
-    int height;
-    int value;
-    int top;
-    int bottom;
-
-    GetClientRect(slider, &rect);
-    top = rect.top + 12;
-    bottom = rect.bottom - 12;
-    height = bottom - top;
-
-    if (height <= 1)
-        return alphaDialogValue;
-
-    if (y <= top) return 255;
-    if (y >= bottom) return 60;
-
-    value = 255 - ((255 - 60) * (y - top) + height / 2) / height;
-    if (value < 60) value = 60;
-    if (value > 255) value = 255;
-
-    return (BYTE)value;
-}
-
-static int alphaToSliderY(HWND slider, BYTE alpha) {
-    RECT rect;
-    int top;
-    int bottom;
-
-    GetClientRect(slider, &rect);
-    top = rect.top + 12;
-    bottom = rect.bottom - 12;
-
-    return bottom - ((int)(alpha - 60) * (bottom - top)) / (255 - 60);
-}
-
-static void updateAlphaControls(HWND dialog, BYTE alpha) {
-    char text[16];
-    HWND slider;
-    HWND edit;
-
-    if (alphaControlsUpdating)
-        return;
-
-    alphaControlsUpdating = true;
-    alphaDialogValue = alpha;
-    snprintf(text, sizeof(text), "%u", alphaDialogValue);
-    edit = GetDlgItem(dialog, ID_ALPHA_EDIT);
-    SetWindowTextA(edit, text);
-    InvalidateRect(edit, null, true);
-    UpdateWindow(edit);
-    slider = GetDlgItem(dialog, ID_ALPHA_SLIDER);
-    InvalidateRect(slider, null, false);
-    UpdateWindow(slider);
-    alphaControlsUpdating = false;
-
-    applyAlphaPreview(dialog);
-}
-
-static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref) {
-    HWND dialog = GetParent(hwnd);
-    PAINTSTRUCT ps;
-    RECT rect;
-    RECT track;
-    RECT active;
-    HBRUSH brush;
-    HPEN pen;
-    HGDIOBJ oldBrush;
-    HGDIOBJ oldPen;
-    int y;
-
-    (void)id;
-    (void)ref;
-
-    if (msg == WM_LBUTTONDOWN || (msg == WM_MOUSEMOVE && (w & MK_LBUTTON))) {
-        SetCapture(hwnd);
-        updateAlphaControls(dialog, sliderPointToAlpha(hwnd, (short)HIWORD(l)));
-        return 0;
-    }
-
-    if (msg == WM_LBUTTONUP) {
-        if (GetCapture() == hwnd)
-            ReleaseCapture();
-
-        updateAlphaControls(dialog, sliderPointToAlpha(hwnd, (short)HIWORD(l)));
-        return 0;
-    }
-
-    if (msg == WM_ERASEBKGND)
-        return 1;
-
-    if (msg == WM_PAINT) {
-        HDC dc = BeginPaint(hwnd, &ps);
-
-        GetClientRect(hwnd, &rect);
-
-        brush = CreateSolidBrush(UI_BG);
-        FillRect(dc, &rect, brush);
-        DeleteObject(brush);
-
-        track.left = rect.left + ((rect.right - rect.left) / 2) - 3;
-        track.right = track.left + 6;
-        track.top = rect.top + 12;
-        track.bottom = rect.bottom - 12;
-
-        brush = CreateSolidBrush(UI_BORDER);
-        pen = CreatePen(PS_SOLID, 1, UI_BORDER);
-        oldBrush = SelectObject(dc, brush);
-        oldPen = SelectObject(dc, pen);
-        RoundRect(dc, track.left, track.top, track.right, track.bottom, 6, 6);
-        SelectObject(dc, oldPen);
-        SelectObject(dc, oldBrush);
-        DeleteObject(pen);
-        DeleteObject(brush);
-
-        y = alphaToSliderY(hwnd, alphaDialogValue);
-        active = track;
-        active.top = y;
-
-        brush = CreateSolidBrush(UI_ACCENT);
-        pen = CreatePen(PS_SOLID, 1, UI_ACCENT);
-        oldBrush = SelectObject(dc, brush);
-        oldPen = SelectObject(dc, pen);
-        RoundRect(dc, active.left, active.top, active.right, active.bottom, 6, 6);
-        SelectObject(dc, oldPen);
-        SelectObject(dc, oldBrush);
-        DeleteObject(pen);
-        DeleteObject(brush);
-
-        brush = CreateSolidBrush(UI_TEXT);
-        Ellipse(dc, track.left - 5, y - 7, track.right + 5, y + 7);
-        DeleteObject(brush);
-
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-
-    if (msg == WM_NCDESTROY)
-        RemoveWindowSubclass(hwnd, alphaSliderProc, id);
-
-    return DefSubclassProc(hwnd, msg, w, l);
 }
 
 static void makeTrayIconData(App* self, NOTIFYICONDATAA* data) {
@@ -719,10 +535,7 @@ static void drawDarkButton(DRAWITEMSTRUCT* draw, const WCHAR* label, boolean acc
     COLORREF border = accent ? UI_ACCENT : UI_BORDER;
 
     FillRect(draw->hDC, &draw->rcItem,
-        GetParent(draw->hwndItem) == trayPopupWindow &&
-        ((draw->CtlID >= ID_HOTKEY_APPLY_RECORD && draw->CtlID <= ID_HOTKEY_ADJUST_RECORD) ||
-         (draw->CtlID >= ID_HOTKEY_APPLY_LABEL && draw->CtlID <= ID_HOTKEY_ADJUST_LABEL)) ?
-        trayPanelBrush : alphaDarkBrush);
+        alphaDarkBrush);
 
     brush = CreateSolidBrush(background);
     pen = CreatePen(PS_SOLID, 1, border);
@@ -785,78 +598,6 @@ static void shortcutToText(DWORD modifiers, const WCHAR* action, WCHAR* out, siz
     WCHAR modText[96];
     modifiersToText(modifiers, modText, sizeof(modText) / sizeof(modText[0]));
     swprintf(out, outSize, L"%s + %s", modText, action);
-}
-
-static void updateHotkeyDialogLabels(void) {
-    WCHAR text[128];
-
-    if (!hotkeyDialogWindow)
-        return;
-
-    shortcutToText(hotkeyDialogApplyModifiers, tr(STR_MIDDLE_CLICK), text, sizeof(text) / sizeof(text[0]));
-    SetWindowTextW(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_APPLY_LABEL), text);
-
-    shortcutToText(hotkeyDialogRestoreModifiers, tr(STR_MIDDLE_CLICK), text, sizeof(text) / sizeof(text[0]));
-    SetWindowTextW(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_RESTORE_LABEL), text);
-
-    shortcutToText(hotkeyDialogAdjustModifiers, tr(STR_MOUSE_WHEEL), text, sizeof(text) / sizeof(text[0]));
-    SetWindowTextW(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_ADJUST_LABEL), text);
-}
-
-static void invalidateHotkeyButtons(HWND hwnd) {
-    InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_APPLY_RECORD), null, true);
-    InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_RESTORE_RECORD), null, true);
-    InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_ADJUST_RECORD), null, true);
-    if (hwnd == trayPopupWindow) {
-        InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_APPLY_LABEL), null, true);
-        InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_RESTORE_LABEL), null, true);
-        InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_ADJUST_LABEL), null, true);
-        InvalidateRect(hwnd, null, false);
-    }
-}
-
-static void setHotkeyRecording(HWND hwnd, int action) {
-    const WCHAR* text;
-
-    hotkeyRecordingAction = action;
-    if (action == HOTKEY_ACTION_APPLY)
-        text = tr(STR_HOLD_MIDDLE);
-    else if (action == HOTKEY_ACTION_RESTORE)
-        text = tr(STR_HOLD_MIDDLE);
-    else if (action == HOTKEY_ACTION_ADJUST)
-        text = tr(STR_HOLD_WHEEL);
-    else
-        text = L"";
-
-    SetWindowTextW(GetDlgItem(hwnd,
-        action == HOTKEY_ACTION_APPLY ? ID_HOTKEY_APPLY_LABEL :
-        action == HOTKEY_ACTION_RESTORE ? ID_HOTKEY_RESTORE_LABEL :
-        ID_HOTKEY_ADJUST_LABEL), text);
-    invalidateHotkeyButtons(hwnd);
-}
-
-static void finishHotkeyRecording(DWORD modifiers) {
-    if (!hotkeyDialogWindow || hotkeyRecordingAction == HOTKEY_ACTION_NONE || modifiers == 0)
-        return;
-
-    if (countHotkeyModifiers(modifiers) > HOTKEY_MAX_MODIFIERS) {
-        MessageBoxW(hotkeyDialogWindow, tr(STR_HOTKEY_LIMIT), tr(STR_APP_NAME), MB_OK | MB_ICONWARNING);
-        return;
-    }
-
-    if (hotkeyRecordingAction == HOTKEY_ACTION_APPLY)
-        hotkeyDialogApplyModifiers = modifiers;
-    else if (hotkeyRecordingAction == HOTKEY_ACTION_RESTORE)
-        hotkeyDialogRestoreModifiers = modifiers;
-    else if (hotkeyRecordingAction == HOTKEY_ACTION_ADJUST)
-        hotkeyDialogAdjustModifiers = modifiers;
-
-    if ((modifiers & HOTKEY_MOD_WIN) && appContext)
-        appContext->winUsed = true;
-
-    hotkeyRecordingAction = HOTKEY_ACTION_NONE;
-    updateHotkeyDialogLabels();
-    invalidateHotkeyButtons(hotkeyDialogWindow);
 }
 
 static LRESULT CALLBACK confirmWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
@@ -1004,7 +745,9 @@ static boolean isPopupMenuWindow(HWND hwnd) {
 
     GetClassNameA(hwnd, cls, sizeof(cls));
     if (!strcmp(cls, "#32768"))
-        return false;
+        return GetWindowThreadProcessId(hwnd, NULL) == GetCurrentThreadId();
+    if (!strcmp(cls, "NotifyIconOverflowWindow") || !strcmp(cls, "TopLevelWindowForOverflowXamlIsland"))
+        return true;
 
     exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
     style = GetWindowLong(hwnd, GWL_STYLE);
@@ -1024,6 +767,13 @@ static BYTE getCurrentAlpha(App* self) {
     return self->transparency.presetToAlpha(&self->transparency, self->settings.preset);
 }
 
+static boolean applyTrackedAlpha(App* self, HWND hwnd, BYTE alpha) {
+    if (!IsWindow(hwnd)) return false;
+    self->tracker.track(&self->tracker, &self->transparency, hwnd);
+    if (!self->tracker.isTracked(&self->tracker, hwnd)) return false;
+    return self->transparency.apply(&self->transparency, hwnd, alpha);
+}
+
 static void applyPopupTransparency(App* self, HWND hwnd) {
     BYTE alpha;
 
@@ -1031,8 +781,7 @@ static void applyPopupTransparency(App* self, HWND hwnd) {
         return;
 
     alpha = getCurrentAlpha(self);
-    self->transparency.apply(&self->transparency, hwnd, alpha);
-    self->transparency.refresh(&self->transparency, hwnd);
+    applyTrackedAlpha(self, hwnd, alpha);
 }
 
 static void showStatusMenu(HWND owner, POINT point, const WCHAR* message) {
@@ -1060,193 +809,6 @@ static void showStatusMenu(HWND owner, POINT point, const WCHAR* message) {
     DeleteObject(menuBrush);
 }
 
-static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
-    HWND edit;
-    HWND slider;
-    char text[16];
-    int value;
-
-    switch (msg) {
-        case WM_CREATE:
-            ensureUiResources();
-
-            CreateWindowW(L"STATIC", tr(STR_CUSTOM_ALPHA), WS_VISIBLE | WS_CHILD, 18, 14, 170, 20, hwnd, null, null, null);
-
-            slider = CreateWindowExA(0, "STATIC", "", WS_VISIBLE | WS_CHILD | SS_NOTIFY,
-                26, 42, 54, 166, hwnd, (HMENU)ID_ALPHA_SLIDER, null, null);
-            SetWindowSubclass(slider, alphaSliderProc, 1, 0);
-
-            CreateWindowW(L"STATIC", L"255", WS_VISIBLE | WS_CHILD, 92, 48, 36, 18, hwnd, null, null, null);
-            CreateWindowW(L"STATIC", L"60", WS_VISIBLE | WS_CHILD, 92, 184, 36, 18, hwnd, null, null, null);
-            CreateWindowW(L"STATIC", tr(STR_ALPHA_VALUE), WS_VISIBLE | WS_CHILD, 104, 98, 42, 20, hwnd, null, null, null);
-            edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_VISIBLE | WS_CHILD | ES_NUMBER,
-                150, 94, 70, 24, hwnd, (HMENU)ID_ALPHA_EDIT, null, null);
-            snprintf(text, sizeof(text), "%u", alphaDialogValue);
-            SetWindowTextA(edit, text);
-
-            CreateWindowW(L"BUTTON", tr(STR_OK), WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
-                38, 224, 82, 28, hwnd, (HMENU)ID_ALPHA_OK, null, null);
-            CreateWindowW(L"BUTTON", tr(STR_CANCEL), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
-                136, 224, 82, 28, hwnd, (HMENU)ID_ALPHA_CANCEL, null, null);
-
-            applyAlphaPreview(hwnd);
-            polishDialog(hwnd);
-
-            SetFocus(slider);
-            return 0;
-
-        case WM_ERASEBKGND: {
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            FillRect((HDC)w, &rect, alphaDarkBrush);
-            return 1;
-        }
-
-        case WM_CTLCOLORDLG:
-            return (LRESULT)alphaDarkBrush;
-
-        case WM_CTLCOLORSTATIC:
-            SetTextColor((HDC)w, UI_TEXT);
-            SetBkColor((HDC)w, UI_BG);
-            return (LRESULT)alphaDarkBrush;
-
-        case WM_CTLCOLOREDIT:
-            SetTextColor((HDC)w, UI_TEXT);
-            SetBkColor((HDC)w, UI_PANEL);
-            return (LRESULT)alphaEditBrush;
-
-        case WM_DRAWITEM:
-            if (w == ID_ALPHA_OK || w == ID_ALPHA_CANCEL) {
-                const WCHAR* label = (w == ID_ALPHA_OK) ? tr(STR_OK) : tr(STR_CANCEL);
-                drawDarkButton((DRAWITEMSTRUCT*)l, label, w == ID_ALPHA_OK);
-                return true;
-            }
-            break;
-
-        case WM_COMMAND:
-            if (LOWORD(w) == ID_ALPHA_EDIT && HIWORD(w) == EN_CHANGE) {
-                if (alphaControlsUpdating)
-                    return 0;
-
-                GetWindowTextA(GetDlgItem(hwnd, ID_ALPHA_EDIT), text, sizeof(text));
-                value = atoi(text);
-
-                if (value >= 60 && value <= 255) {
-                    updateAlphaControls(hwnd, (BYTE)value);
-                }
-            }
-
-            if (LOWORD(w) == ID_ALPHA_OK) {
-                GetWindowTextA(GetDlgItem(hwnd, ID_ALPHA_EDIT), text, sizeof(text));
-                value = atoi(text);
-                if (value < 60 || value > 255) {
-                    MessageBoxW(hwnd, tr(STR_ALPHA_RANGE), tr(STR_APP_NAME), MB_OK | MB_ICONWARNING);
-                    return 0;
-                }
-
-                alphaDialogValue = (BYTE)value;
-                alphaDialogOk = true;
-                DestroyWindow(hwnd);
-                return 0;
-            }
-
-            if (LOWORD(w) == ID_ALPHA_CANCEL) {
-                if (alphaPreviewWindow) {
-                    Transparency transparency = new_Transparency();
-                    transparency.apply(&transparency, alphaPreviewWindow, alphaPreviewOriginal);
-                    transparency.refresh(&transparency, alphaPreviewWindow);
-                }
-
-                DestroyWindow(hwnd);
-                return 0;
-            }
-            break;
-
-        case WM_KEYDOWN:
-            if (w == VK_ESCAPE) {
-                SendMessage(hwnd, WM_COMMAND, ID_ALPHA_CANCEL, 0);
-                return 0;
-            }
-            if (w == VK_RETURN) {
-                SendMessage(hwnd, WM_COMMAND, ID_ALPHA_OK, 0);
-                return 0;
-            }
-            break;
-
-        case WM_CLOSE:
-            if (alphaPreviewWindow) {
-                Transparency transparency = new_Transparency();
-                transparency.apply(&transparency, alphaPreviewWindow, alphaPreviewOriginal);
-                transparency.refresh(&transparency, alphaPreviewWindow);
-            }
-
-            DestroyWindow(hwnd);
-            return 0;
-    }
-
-    return DefWindowProc(hwnd, msg, w, l);
-}
-
-static boolean askAlpha(HWND owner, BYTE* alpha) {
-    WNDCLASSA wc = {0};
-    HWND window;
-    MSG msg;
-    INITCOMMONCONTROLSEX icc;
-    POINT point;
-
-    alphaDialogValue = *alpha;
-    alphaDialogOk = false;
-    alphaPreviewWindow = null;
-    alphaPreviewOriginal = ALPHA_OPAQUE;
-
-    GetCursorPos(&point);
-    alphaPreviewWindow = GetAncestor(WindowFromPoint(point), GA_ROOT);
-    if (alphaPreviewWindow == owner || alphaPreviewWindow == GetDesktopWindow())
-        alphaPreviewWindow = GetForegroundWindow();
-
-    if (alphaPreviewWindow && alphaPreviewWindow != owner) {
-        Transparency transparency = new_Transparency();
-        alphaPreviewOriginal = transparency.getWindowAlpha(&transparency, alphaPreviewWindow);
-    } else {
-        alphaPreviewWindow = null;
-    }
-
-    icc.dwSize = sizeof(icc);
-    icc.dwICC = ICC_BAR_CLASSES;
-    InitCommonControlsEx(&icc);
-
-    wc.lpfnWndProc = alphaWindowProc;
-    wc.hInstance = GetModuleHandle(null);
-    wc.lpszClassName = "AlphaInputWindow";
-    RegisterClassA(&wc);
-
-    window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
-        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 260, 285,
-        owner, null, wc.hInstance, null);
-
-    if (!window)
-        return false;
-
-    positionPopupWindow(window, point);
-    SetWindowTextW(window, tr(STR_CUSTOM_ALPHA));
-    EnableWindow(owner, false);
-    ShowWindow(window, SW_SHOWNORMAL);
-
-    while (IsWindow(window) && GetMessage(&msg, null, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-
-    EnableWindow(owner, true);
-    SetForegroundWindow(owner);
-
-    if (alphaDialogOk)
-        *alpha = alphaDialogValue;
-
-    alphaPreviewWindow = null;
-    return alphaDialogOk;
-}
-
 static BOOL CALLBACK enumExplorerWindows(HWND hwnd, LPARAM lParam) {
     App* self = (App*)lParam;
 
@@ -1260,28 +822,32 @@ static BOOL CALLBACK enumExplorerWindows(HWND hwnd, LPARAM lParam) {
         return true;
 
     BYTE alpha = getCurrentAlpha(self);
-    self->transparency.apply(&self->transparency, hwnd, alpha);
-    self->tracker.track(&self->tracker, &self->transparency, hwnd);
-
+    applyTrackedAlpha(self, hwnd, alpha);
     return true;
 }
 
 static BOOL CALLBACK applyExplorerAutoWindow(HWND hwnd, LPARAM lParam) {
     App* self = (App*)lParam;
 
-    if (!IsWindowVisible(hwnd))
-        return true;
-
     if (isAutoTarget(self, hwnd)) {
         BYTE alpha = self->settings.explorerAuto ?
             getCurrentAlpha(self) :
             ALPHA_OPAQUE;
 
-        self->transparency.apply(&self->transparency, hwnd, alpha);
+        applyTrackedAlpha(self, hwnd, alpha);
         self->transparency.refresh(&self->transparency, hwnd);
 
-        if (self->settings.explorerAuto)
-            self->tracker.track(&self->tracker, &self->transparency, hwnd);
+    }
+
+    if (isPopupMenuWindow(hwnd)) {
+        if (self->settings.popupTransparency)
+            applyPopupTransparency(self, hwnd);
+        else if (self->tracker.isTracked(&self->tracker, hwnd)) {
+            for (int i = 0; i < self->tracker.count; i++) {
+                if (self->tracker.windows[i].hwnd == hwnd)
+                    self->transparency.apply(&self->transparency, hwnd, self->tracker.windows[i].originalAlpha);
+            }
+        }
     }
 
     return true;
@@ -1383,13 +949,20 @@ static void CALLBACK winEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd
     (void)tid;
     (void)time;
 
-    if (!self || !IsWindow(hwnd))
+    if (!self)
         return;
+
+    if (event == EVENT_OBJECT_DESTROY && obj == OBJID_WINDOW) {
+        self->tracker.remove(&self->tracker, hwnd);
+        return;
+    }
+    if (!IsWindow(hwnd)) return;
 
     GetClassNameA(hwnd, cls, sizeof(cls));
 
     if (event == EVENT_OBJECT_SHOW && obj == OBJID_WINDOW && IsWindowVisible(hwnd) && isPopupMenuWindow(hwnd)) {
-        applyPopupTransparency(self, hwnd);
+        if (!self->tracker.isTracked(&self->tracker, hwnd))
+            applyPopupTransparency(self, hwnd);
         return;
     }
 
@@ -1400,12 +973,9 @@ static void CALLBACK winEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd
         if (!self->settings.explorerAuto)
             return;
 
-        self->transparency.apply(&self->transparency, hwnd, getCurrentAlpha(self));
-        self->tracker.track(&self->tracker, &self->transparency, hwnd);
+        applyTrackedAlpha(self, hwnd, getCurrentAlpha(self));
     }
 
-    if (event == EVENT_OBJECT_DESTROY && obj == OBJID_WINDOW)
-        self->tracker.remove(&self->tracker, hwnd);
 }
 
 static void paintTrayCard(HDC dc, RECT rect, COLORREF fill, COLORREF border) {
@@ -1420,203 +990,147 @@ static void paintTrayCard(HDC dc, RECT rect, COLORREF fill, COLORREF border) {
     DeleteObject(brush);
 }
 
-static void showHotkeyPopup(App* self);
+static int inlineAction(UINT id) {
+    return id >= ID_INLINE_APPLY && id <= ID_INLINE_ADJUST ? (int)(id - ID_INLINE_APPLY + 1) : HOTKEY_ACTION_NONE;
+}
 
-static LRESULT CALLBACK shortcutButtonProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref) {
-    (void)ref;
-    if (msg == WM_SETCURSOR && LOWORD(l) == HTCLIENT) {
-        SetCursor(LoadCursor(null, IDC_HAND));
-        return true;
+static void changeInlineAlpha(HWND hwnd, int y) {
+    RECT rect;
+    if (!GetMenuItemRect(appContext->trayWindow, inlineAlphaMenu, 0, &rect)) return;
+    POINT point = {0, y};
+    ClientToScreen(hwnd, &point);
+    int top = rect.top + 60;
+    int bottom = rect.bottom - 24;
+    int value = 255 - ((point.y - top) * 195 + (bottom - top) / 2) / (bottom - top);
+    value = max(60, min(255, value));
+    appContext->settings.preset = PRESET_CUSTOM;
+    appContext->settings.customAlpha = (BYTE)value;
+    appContext->settings.save(&appContext->settings);
+    appContext->applyExplorerAutoAll(appContext);
+    InvalidateRect(hwnd, NULL, false);
+}
+
+static void startInlineRecording(HWND hwnd, UINT id) {
+    int action = inlineAction(id);
+    if (!action) return;
+    inlineRecordingAction = inlineRecordingAction == action ? HOTKEY_ACTION_NONE : action;
+    inlineMenuWindow = hwnd;
+    InvalidateRect(hwnd, NULL, false);
+}
+
+static LRESULT CALLBACK inlineMenuProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref) {
+    HMENU menu = (HMENU)ref;
+    if (menu == inlineAlphaMenu) {
+        if (msg == WM_LBUTTONDOWN || (msg == WM_MOUSEMOVE && inlineDragging)) {
+            if (msg == WM_LBUTTONDOWN) { inlineDragging = true; SetCapture(hwnd); }
+            changeInlineAlpha(hwnd, (short)HIWORD(l));
+            return 0;
+        }
+        if (msg == WM_LBUTTONUP) {
+            if (inlineDragging) changeInlineAlpha(hwnd, (short)HIWORD(l));
+            inlineDragging = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            return 0;
+        }
+        if (msg == WM_CAPTURECHANGED) inlineDragging = false;
+        if (msg == WM_KEYDOWN && (w == VK_UP || w == VK_DOWN || w == VK_HOME || w == VK_END)) {
+            int alpha = getCurrentAlpha(appContext);
+            alpha = w == VK_HOME ? 255 : w == VK_END ? 60 : alpha + (w == VK_UP ? 1 : -1);
+            appContext->settings.preset = PRESET_CUSTOM;
+            appContext->settings.customAlpha = (BYTE)max(60, min(255, alpha));
+            appContext->settings.save(&appContext->settings);
+            appContext->applyExplorerAutoAll(appContext);
+            InvalidateRect(hwnd, NULL, false);
+            return 0;
+        }
+    } else if (menu == inlineKeysMenu && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP)) {
+        if (msg == WM_LBUTTONUP) {
+            POINT point = {(short)LOWORD(l), (short)HIWORD(l)};
+            ClientToScreen(hwnd, &point);
+            for (UINT i = 0; i < 3; i++) {
+                RECT rect;
+                if (GetMenuItemRect(appContext->trayWindow, menu, i, &rect) && PtInRect(&rect, point))
+                    startInlineRecording(hwnd, ID_INLINE_APPLY + i);
+            }
+        }
+        return 0;
     }
-    if (msg == WM_NCDESTROY)
-        RemoveWindowSubclass(hwnd, shortcutButtonProc, id);
+    if (msg == WM_SHOWWINDOW && !w && menu == inlineKeysMenu)
+        inlineRecordingAction = HOTKEY_ACTION_NONE;
+    if (msg == WM_NCDESTROY) {
+        appContext->tracker.remove(&appContext->tracker, hwnd);
+        if (inlineMenuWindow == hwnd) { inlineMenuWindow = null; inlineRecordingAction = HOTKEY_ACTION_NONE; }
+        RemoveWindowSubclass(hwnd, inlineMenuProc, id);
+    }
     return DefSubclassProc(hwnd, msg, w, l);
 }
 
-static LRESULT CALLBACK trayPopupProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
-    App* self = appContext;
-    if (!self)
-        return DefWindowProcW(hwnd, msg, w, l);
-
-    switch (msg) {
-        case WM_CREATE: {
-
-            const int labels[] = {ID_HOTKEY_APPLY_LABEL, ID_HOTKEY_RESTORE_LABEL, ID_HOTKEY_ADJUST_LABEL};
-            const StringId titles[] = {STR_HOTKEY_APPLY, STR_HOTKEY_RESTORE, STR_HOTKEY_ADJUST};
-
-            ensureUiResources();
-            if (!trayPanelBrush)
-                trayPanelBrush = CreateSolidBrush(UI_PANEL);
-            if (!trayHeadingFont)
-                trayHeadingFont = CreateFontW(-17, 0, 0, 0, FW_SEMIBOLD, false, false, false, DEFAULT_CHARSET,
-                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            CreateWindowW(L"STATIC", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"단축키" : L"Shortcuts", WS_CHILD | WS_VISIBLE,
-                22, 18, 390, 26, hwnd, (HMENU)ID_TRAY_ALPHA_TITLE, null, null);
-            hotkeyDialogWindow = hwnd;
-            hotkeyDialogApplyModifiers = self->settings.applyModifiers;
-            hotkeyDialogRestoreModifiers = self->settings.restoreModifiers;
-            hotkeyDialogAdjustModifiers = self->settings.adjustModifiers;
-            hotkeyRecordingAction = HOTKEY_ACTION_NONE;
-            for (int i = 0; i < 3; i++) {
-                int y = 88 + i * 84;
-                CreateWindowW(L"STATIC", tr(titles[i]), WS_CHILD | WS_VISIBLE,
-                    38, y, 356, 20, hwnd, (HMENU)(INT_PTR)(ID_TRAY_ROW_TITLE + i), null, null);
-                CreateWindowW(L"BUTTON", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                    38, y + 24, 356, 32, hwnd, (HMENU)(INT_PTR)labels[i], null, null);
-                SetWindowSubclass(GetDlgItem(hwnd, labels[i]), shortcutButtonProc, 1, 0);
-            }
-            updateHotkeyDialogLabels();
-            CreateWindowW(L"STATIC", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"키 조합을 클릭해 변경하세요" : L"Click a shortcut to change it",
-                WS_CHILD | WS_VISIBLE, 22, 48, 390, 20, hwnd, (HMENU)ID_TRAY_HOTKEY_TITLE, null, null);
-            CreateWindowW(L"STATIC", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"변경 시 자동 저장" : L"Saved automatically",
-                WS_CHILD | WS_VISIBLE, 22, 348, 390, 20, hwnd, (HMENU)ID_TRAY_HINT, null, null);
-            CreateWindowW(L"BUTTON", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"닫기" : L"Close",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 22, 378, 388, 32, hwnd, (HMENU)ID_TRAY_BACK, null, null);
-            polishDialog(hwnd);
-            SendMessage(GetDlgItem(hwnd, ID_TRAY_ALPHA_TITLE), WM_SETFONT, (WPARAM)trayHeadingFont, true);
-
-            return 0;
+static BOOL CALLBACK attachInlineMenus(HWND hwnd, LPARAM param) {
+    App* self = (App*)param;
+    char cls[64];
+    RECT windowRect;
+    GetClassNameA(hwnd, cls, sizeof(cls));
+    if (strcmp(cls, "#32768") || !IsWindowVisible(hwnd)) return true;
+    GetWindowRect(hwnd, &windowRect);
+    HMENU candidates[] = {inlineAlphaMenu, inlineKeysMenu};
+    for (int i = 0; i < 2; i++) {
+        RECT itemRect;
+        if (candidates[i] && GetMenuItemRect(self->trayWindow, candidates[i], 0, &itemRect) &&
+            itemRect.right > itemRect.left && itemRect.bottom > itemRect.top &&
+            itemRect.left >= windowRect.left && itemRect.right <= windowRect.right &&
+            itemRect.top >= windowRect.top && itemRect.bottom <= windowRect.bottom) {
+            SetWindowSubclass(hwnd, inlineMenuProc, 77, (DWORD_PTR)candidates[i]);
+            inlineMenuWindow = hwnd;
         }
-        case WM_TRAY_RECORD: {
-            DWORD modifiers = (DWORD)w;
-            int action = hotkeyRecordingAction;
-            if (action == HOTKEY_ACTION_NONE || action != (int)l || modifiers == 0)
-                return 0;
-            if ((action == HOTKEY_ACTION_APPLY && modifiers == self->settings.restoreModifiers) ||
-                (action == HOTKEY_ACTION_RESTORE && modifiers == self->settings.applyModifiers)) {
-                /* Keep recording active so the user can immediately try another combination. */
-                SetWindowTextW(GetDlgItem(hwnd, action == HOTKEY_ACTION_APPLY ?
-                    ID_HOTKEY_APPLY_LABEL : ID_HOTKEY_RESTORE_LABEL),
-                    effectiveLanguage(self) == LANGUAGE_KOREAN ? L"이미 사용 중인 조합입니다. 다시 입력하세요." : L"Already assigned. Try another combination.");
-                return 0;
-            }
-            finishHotkeyRecording(modifiers);
-            self->settings.applyModifiers = hotkeyDialogApplyModifiers;
-            self->settings.restoreModifiers = hotkeyDialogRestoreModifiers;
-            self->settings.adjustModifiers = hotkeyDialogAdjustModifiers;
-            self->settings.save(&self->settings);
-            return 0;
-        }
-        case WM_COMMAND: {
-            int id = LOWORD(w);
-            int action = id == ID_HOTKEY_APPLY_LABEL ? HOTKEY_ACTION_APPLY :
-                id == ID_HOTKEY_RESTORE_LABEL ? HOTKEY_ACTION_RESTORE :
-                id == ID_HOTKEY_ADJUST_LABEL ? HOTKEY_ACTION_ADJUST : HOTKEY_ACTION_NONE;
-            if (id == ID_TRAY_BACK) {
-                DestroyWindow(hwnd);
-                return 0;
-            }
-            if (action != HOTKEY_ACTION_NONE) {
-                if (hotkeyRecordingAction == action) {
-                    hotkeyRecordingAction = HOTKEY_ACTION_NONE;
-                    updateHotkeyDialogLabels();
-                    invalidateHotkeyButtons(hwnd);
-                } else {
-                    updateHotkeyDialogLabels();
-                    setHotkeyRecording(hwnd, action);
-                }
-                return 0;
-            }
-            if (id == IDCANCEL) {
-                if (hotkeyRecordingAction != HOTKEY_ACTION_NONE) {
-                    hotkeyRecordingAction = HOTKEY_ACTION_NONE;
-                    updateHotkeyDialogLabels();
-                    invalidateHotkeyButtons(hwnd);
-                } else {
-                    DestroyWindow(hwnd);
-                }
-                return 0;
-            }
-            break;
-        }
-        case WM_ACTIVATE:
-            if (LOWORD(w) == WA_INACTIVE && hotkeyRecordingAction == HOTKEY_ACTION_NONE)
-                PostMessage(hwnd, WM_CLOSE, 0, 0);
-            return 0;
-        case WM_ERASEBKGND: {
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            FillRect((HDC)w, &rect, alphaDarkBrush);
-            return 1;
-        }
-        case WM_PRINTCLIENT:
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC dc = msg == WM_PRINTCLIENT ? (HDC)w : BeginPaint(hwnd, &ps);
-            RECT client;
-            GetClientRect(hwnd, &client);
-            FillRect(dc, &client, alphaDarkBrush);
-            for (int i = 0; i < 3; i++) {
-                RECT row = {22, 78 + i * 84, 410, 156 + i * 84};
-                paintTrayCard(dc, row, UI_PANEL, hotkeyRecordingAction == i + 1 ? UI_ACCENT : UI_BORDER);
-            }
-            if (msg == WM_PAINT)
-                EndPaint(hwnd, &ps);
-            return 0;
-        }
-        case WM_CTLCOLORSTATIC: {
-            int id = GetDlgCtrlID((HWND)l);
-            boolean card = id == ID_ALPHA_EDIT || id == ID_ALPHA_SLIDER || id == 0 ||
-                (id >= ID_TRAY_ROW_TITLE && id < ID_TRAY_ROW_TITLE + 3) ||
-                (id >= ID_HOTKEY_APPLY_LABEL && id <= ID_HOTKEY_ADJUST_LABEL);
-            SetTextColor((HDC)w, id == ID_ALPHA_EDIT ? UI_ACCENT :
-                (id == ID_TRAY_HINT || (id >= ID_HOTKEY_APPLY_LABEL && id <= ID_HOTKEY_ADJUST_LABEL) ? UI_MUTED : UI_TEXT));
-            SetBkColor((HDC)w, card ? UI_PANEL : UI_BG);
-            return (LRESULT)(card ? trayPanelBrush : alphaDarkBrush);
-        }
-        case WM_DRAWITEM: {
-            int id = (int)w;
-            WCHAR label[256];
-            GetWindowTextW(((DRAWITEMSTRUCT*)l)->hwndItem, label, 256);
-            boolean active = (id == ID_HOTKEY_APPLY_LABEL && hotkeyRecordingAction == HOTKEY_ACTION_APPLY) ||
-                (id == ID_HOTKEY_RESTORE_LABEL && hotkeyRecordingAction == HOTKEY_ACTION_RESTORE) ||
-                (id == ID_HOTKEY_ADJUST_LABEL && hotkeyRecordingAction == HOTKEY_ACTION_ADJUST);
-            drawDarkButton((DRAWITEMSTRUCT*)l, label, active);
-            if (((DRAWITEMSTRUCT*)l)->itemState & ODS_FOCUS) {
-                RECT focus = ((DRAWITEMSTRUCT*)l)->rcItem;
-                InflateRect(&focus, -4, -4);
-                DrawFocusRect(((DRAWITEMSTRUCT*)l)->hDC, &focus);
-            }
-            return true;
-        }
-        case WM_CLOSE:
-            DestroyWindow(hwnd);
-            return 0;
-        case WM_DESTROY:
-            if (hotkeyDialogWindow == hwnd)
-                hotkeyDialogWindow = null;
-            trayPopupWindow = null;
-            hotkeyRecordingAction = HOTKEY_ACTION_NONE;
-            return 0;
     }
-    return DefWindowProcW(hwnd, msg, w, l);
+    if (self->settings.popupTransparency && self->transparency.getWindowAlpha(&self->transparency, hwnd) != getCurrentAlpha(self))
+        applyPopupTransparency(self, hwnd);
+    return true;
 }
 
-static void showHotkeyPopup(App* self) {
-    WNDCLASSW wc = {0};
-    INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_BAR_CLASSES};
-    POINT anchor;
-    if (IsWindow(trayPopupWindow)) {
-        SetForegroundWindow(trayPopupWindow);
-        return;
+static BOOL CALLBACK detachInlineMenus(HWND hwnd, LPARAM param) {
+    (void)param;
+    RemoveWindowSubclass(hwnd, inlineMenuProc, 77);
+    return true;
+}
+
+static void drawInlineMenu(DRAWITEMSTRUCT* draw, MenuItemData* item) {
+    RECT rect = draw->rcItem;
+    HGDIOBJ font = SelectObject(draw->hDC, uiFont);
+    SetBkMode(draw->hDC, TRANSPARENT);
+    FillRect(draw->hDC, &rect, alphaDarkBrush);
+    if (inlineAction(item->id) && (draw->itemState & ODS_SELECTED))
+        paintTrayCard(draw->hDC, rect, UI_MENU_HOVER, UI_MENU_HOVER);
+    if (item->id == ID_INLINE_ALPHA) {
+        WCHAR value[80];
+        swprintf(value, 80, L"%s  %u%%", effectiveLanguage(appContext) == LANGUAGE_KOREAN ? L"불투명도" : L"Opacity",
+            (unsigned)((getCurrentAlpha(appContext) * 100 + 127) / 255));
+        RECT title = rect; title.top += 12; title.bottom = title.top + 24;
+        SetTextColor(draw->hDC, UI_TEXT);
+        DrawTextW(draw->hDC, value, -1, &title, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        RECT track = {(rect.left + rect.right) / 2 - 3, rect.top + 60,
+            (rect.left + rect.right) / 2 + 3, rect.bottom - 24};
+        paintTrayCard(draw->hDC, track, UI_BORDER, UI_BORDER);
+        int y = track.top + ((255 - getCurrentAlpha(appContext)) * (track.bottom - track.top)) / 195;
+        RECT active = track; active.top = y;
+        paintTrayCard(draw->hDC, active, UI_ACCENT, UI_ACCENT);
+        RECT knob = {track.left - 5, y - 8, track.right + 5, y + 8};
+        paintTrayCard(draw->hDC, knob, UI_TEXT, UI_TEXT);
+    } else {
+        int action = inlineAction(item->id);
+        WCHAR shortcut[128];
+        DWORD modifiers = action == HOTKEY_ACTION_APPLY ? appContext->settings.applyModifiers :
+            action == HOTKEY_ACTION_RESTORE ? appContext->settings.restoreModifiers : appContext->settings.adjustModifiers;
+        RECT title = rect; title.left += 14; title.top += 8; title.bottom = title.top + 20;
+        RECT value = title; value.top += 24; value.bottom += 24;
+        SetTextColor(draw->hDC, UI_TEXT);
+        DrawTextW(draw->hDC, item->text, -1, &title, DT_SINGLELINE | DT_VCENTER);
+        shortcutToText(modifiers, tr(action == HOTKEY_ACTION_ADJUST ? STR_MOUSE_WHEEL : STR_MIDDLE_CLICK), shortcut, 128);
+        SetTextColor(draw->hDC, inlineRecordingAction == action ? UI_ACCENT : UI_MUTED);
+        DrawTextW(draw->hDC, inlineRecordingAction == action ? tr(action == HOTKEY_ACTION_ADJUST ? STR_HOLD_WHEEL : STR_HOLD_MIDDLE) : shortcut,
+            -1, &value, DT_SINGLELINE | DT_VCENTER);
     }
-    InitCommonControlsEx(&icc);
-    ensureUiResources();
-    wc.lpfnWndProc = trayPopupProc;
-    wc.hInstance = GetModuleHandle(null);
-    wc.hCursor = LoadCursor(null, IDC_ARROW);
-    wc.hbrBackground = alphaDarkBrush;
-    wc.lpszClassName = L"TransparencyTrayPopup";
-    RegisterClassW(&wc);
-    GetCursorPos(&anchor);
-    trayPopupWindow = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, tr(STR_APP_NAME),
-        WS_POPUP | WS_BORDER | WS_CLIPCHILDREN, 0, 0, 436, 432, self->trayWindow, null, wc.hInstance, null);
-    if (trayPopupWindow) {
-        positionPopupWindow(trayPopupWindow, anchor);
-        ShowWindow(trayPopupWindow, SW_SHOWNORMAL);
-        SetForegroundWindow(trayPopupWindow);
-        SetFocus(GetDlgItem(trayPopupWindow, ID_HOTKEY_APPLY_LABEL));
-    }
+    SelectObject(draw->hDC, font);
 }
 
 static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
@@ -1628,6 +1142,45 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
     if (!self)
         return DefWindowProc(hwnd, msg, w, l);
+
+    if (msg == WM_TIMER && w == TRAY_MENU_TIMER_ID) {
+        EnumThreadWindows(GetCurrentThreadId(), attachInlineMenus, (LPARAM)self);
+        return 0;
+    }
+    if (msg == WM_INITMENUPOPUP) {
+        EnumThreadWindows(GetCurrentThreadId(), attachInlineMenus, (LPARAM)self);
+        return 0;
+    }
+    if (msg == WM_MENUSELECT) {
+        selectedInlineMenu = (HMENU)l;
+        selectedInlineItem = LOWORD(w);
+        return 0;
+    }
+    if (msg == WM_UNINITMENUPOPUP && (HMENU)w == inlineKeysMenu) {
+        inlineRecordingAction = HOTKEY_ACTION_NONE;
+        return 0;
+    }
+    if (msg == WM_INLINE_START) {
+        startInlineRecording(inlineMenuWindow, (UINT)w);
+        return 0;
+    }
+    if (msg == WM_TRAY_RECORD && inlineRecordingAction) {
+        DWORD modifiers = (DWORD)w;
+        int action = inlineRecordingAction;
+        if (!modifiers || action != (int)l || countHotkeyModifiers(modifiers) > HOTKEY_MAX_MODIFIERS) return 0;
+        if ((action == HOTKEY_ACTION_APPLY && modifiers == self->settings.restoreModifiers) ||
+            (action == HOTKEY_ACTION_RESTORE && modifiers == self->settings.applyModifiers)) {
+            MessageBeep(MB_ICONWARNING);
+            return 0;
+        }
+        if (action == HOTKEY_ACTION_APPLY) self->settings.applyModifiers = modifiers;
+        if (action == HOTKEY_ACTION_RESTORE) self->settings.restoreModifiers = modifiers;
+        if (action == HOTKEY_ACTION_ADJUST) self->settings.adjustModifiers = modifiers;
+        self->settings.save(&self->settings);
+        inlineRecordingAction = HOTKEY_ACTION_NONE;
+        InvalidateRect(inlineMenuWindow, NULL, false);
+        return 0;
+    }
 
     if (msg == WM_MEASUREITEM) {
         measure = (MEASUREITEMSTRUCT*)l;
@@ -1647,6 +1200,8 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
 
             measure->itemWidth = item->separator ? 180 : size.cx + 72;
             measure->itemHeight = item->separator ? 11 : 32;
+            if (item->id == ID_INLINE_ALPHA) { measure->itemWidth = 180; measure->itemHeight = 240; }
+            if (inlineAction(item->id)) { measure->itemWidth = 320; measure->itemHeight = 64; }
             return true;
         }
     }
@@ -1656,7 +1211,10 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         item = (MenuItemData*)draw->itemData;
 
         if (draw->CtlType == ODT_MENU && item) {
-            drawTrayMenuItem(draw, item);
+            if (item->id == ID_INLINE_ALPHA || inlineAction(item->id))
+                drawInlineMenu(draw, item);
+            else
+                drawTrayMenuItem(draw, item);
             return true;
         }
     }
@@ -1683,6 +1241,8 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         HMENU setting = CreatePopupMenu();
         HMENU preset  = CreatePopupMenu();
         HMENU language = CreatePopupMenu();
+        inlineAlphaMenu = CreatePopupMenu();
+        inlineKeysMenu = CreatePopupMenu();
         HBRUSH menuBrush = CreateSolidBrush(UI_MENU_BG);
         MENUINFO menuInfo = {0};
         LanguageMode displayLanguage = effectiveLanguage(self);
@@ -1696,6 +1256,12 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         SetMenuInfo(setting, &menuInfo);
         SetMenuInfo(preset, &menuInfo);
         SetMenuInfo(language, &menuInfo);
+        SetMenuInfo(inlineAlphaMenu, &menuInfo);
+        SetMenuInfo(inlineKeysMenu, &menuInfo);
+        appendDarkMenu(inlineAlphaMenu, MF_STRING, ID_INLINE_ALPHA, L"", false, false);
+        appendDarkMenu(inlineKeysMenu, MF_STRING, ID_INLINE_APPLY, tr(STR_HOTKEY_APPLY), false, false);
+        appendDarkMenu(inlineKeysMenu, MF_STRING, ID_INLINE_RESTORE, tr(STR_HOTKEY_RESTORE), false, false);
+        appendDarkMenu(inlineKeysMenu, MF_STRING, ID_INLINE_ADJUST, tr(STR_HOTKEY_ADJUST), false, false);
 
         appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, tr(STR_APP_NAME), false, false);
         appendDarkMenu(root, MF_STRING | MF_DISABLED, 0, tr(STR_LICENSE), false, false);
@@ -1704,7 +1270,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         appendDarkMenu(setting, MF_STRING, ID_SETTING_EXPLORER, tr(STR_EXPLORER_AUTO), self->settings.explorerAuto, false);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_POPUPS, tr(STR_POPUP_TRANSPARENCY), self->settings.popupTransparency, false);
         appendDarkMenu(setting, MF_STRING, ID_SETTING_STARTUP, tr(STR_RUN_AT_STARTUP), self->settings.startupEnabled, false);
-        appendDarkMenu(setting, MF_STRING, ID_SETTING_HOTKEYS, tr(STR_HOTKEYS), false, false);
+        appendDarkMenu(setting, MF_POPUP, (UINT_PTR)inlineKeysMenu, tr(STR_HOTKEYS), false, true);
         (void)displayLanguage;
         appendDarkMenu(language, MF_STRING, ID_LANG_SYSTEM, tr(STR_LANGUAGE_SYSTEM), self->settings.language == LANGUAGE_SYSTEM, false);
         appendDarkMenu(language, MF_STRING, ID_LANG_ENGLISH, tr(STR_LANGUAGE_ENGLISH), self->settings.language == LANGUAGE_ENGLISH, false);
@@ -1716,7 +1282,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         appendDarkMenu(preset, MF_STRING, ID_PRESET_SOFT, tr(STR_PRESET_SOFT), self->settings.preset == PRESET_SOFT, false);
         appendDarkMenu(preset, MF_STRING, ID_PRESET_GLASS, tr(STR_PRESET_GLASS), self->settings.preset == PRESET_GLASS, false);
         appendDarkMenu(preset, MF_STRING, ID_PRESET_GHOST, tr(STR_PRESET_GHOST), self->settings.preset == PRESET_GHOST, false);
-        appendDarkMenu(preset, MF_STRING, ID_PRESET_CUSTOM, tr(STR_CUSTOM_ALPHA), self->settings.preset == PRESET_CUSTOM, false);
+        appendDarkMenu(preset, MF_POPUP, (UINT_PTR)inlineAlphaMenu, tr(STR_CUSTOM_ALPHA), self->settings.preset == PRESET_CUSTOM, true);
 
         appendDarkMenu(setting, MF_POPUP, (UINT_PTR)preset, tr(STR_PRESET), false, true);
         appendDarkSeparator(setting);
@@ -1737,11 +1303,20 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         GetCursorPos(&p);
         SetForegroundWindow(hwnd);
 
+        SetTimer(hwnd, TRAY_MENU_TIMER_ID, 15, NULL);
         UINT cmd = TrackPopupMenu(root, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, null);
+        KillTimer(hwnd, TRAY_MENU_TIMER_ID);
+        EnumThreadWindows(GetCurrentThreadId(), detachInlineMenus, 0);
+        inlineRecordingAction = HOTKEY_ACTION_NONE;
+        inlineDragging = false;
+        inlineMenuWindow = null;
+        selectedInlineMenu = null;
+        selectedInlineItem = 0;
         PostMessage(hwnd, WM_NULL, 0, 0);
         GetCursorPos(&statusPoint);
 
         DestroyMenu(root);
+        inlineAlphaMenu = inlineKeysMenu = null;
         DeleteObject(menuBrush);
 
         switch (cmd) {
@@ -1767,6 +1342,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
             case ID_SETTING_POPUPS:
                 self->settings.popupTransparency = !self->settings.popupTransparency;
                 self->settings.save(&self->settings);
+                self->applyExplorerAutoAll(self);
                 break;
 
             case ID_SETTING_STARTUP:
@@ -1778,9 +1354,6 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 self->settings.save(&self->settings);
                 break;
 
-            case ID_SETTING_HOTKEYS:
-                showHotkeyPopup(self);
-                break;
 
             case ID_LANG_SYSTEM:
             case ID_LANG_ENGLISH:
@@ -1813,13 +1386,6 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 self->applyExplorerAutoAll(self);
                 break;
 
-            case ID_PRESET_CUSTOM:
-                if (askAlpha(hwnd, &self->settings.customAlpha)) {
-                    self->settings.preset = PRESET_CUSTOM;
-                    self->settings.save(&self->settings);
-                    self->applyExplorerAutoAll(self);
-                }
-                break;
 
             case ID_UPDATE_CHECK: {
                 Installer installer = new_Installer();
@@ -1857,8 +1423,35 @@ static LRESULT CALLBACK keyboardHook(int code, WPARAM w, LPARAM l) {
     const boolean down = (w == WM_KEYDOWN || w == WM_SYSKEYDOWN);
     const boolean up   = (w == WM_KEYUP   || w == WM_SYSKEYUP);
 
-    if (down && k->vkCode == VK_ESCAPE && trayPopupWindow && hotkeyRecordingAction != HOTKEY_ACTION_NONE) {
-        PostMessage(trayPopupWindow, WM_COMMAND, IDCANCEL, 0);
+    if (down && inlineRecordingAction && k->vkCode == VK_ESCAPE) {
+        inlineRecordingAction = HOTKEY_ACTION_NONE;
+        if (inlineMenuWindow) InvalidateRect(inlineMenuWindow, NULL, false);
+        return 1;
+    }
+    if (down && selectedInlineMenu && selectedInlineMenu == inlineKeysMenu && k->vkCode == VK_RETURN && inlineAction(selectedInlineItem)) {
+        PostMessage(self->trayWindow, WM_INLINE_START, selectedInlineItem, 0);
+        return 1;
+    }
+    if (down && selectedInlineMenu && selectedInlineMenu == inlineAlphaMenu && inlineMenuWindow &&
+        (k->vkCode == VK_UP || k->vkCode == VK_DOWN || k->vkCode == VK_HOME || k->vkCode == VK_END)) {
+        PostMessage(inlineMenuWindow, WM_KEYDOWN, k->vkCode, 0);
+        return 1;
+    }
+
+    DWORD modifierKey = (k->vkCode == VK_CONTROL || k->vkCode == VK_LCONTROL || k->vkCode == VK_RCONTROL) ? HOTKEY_MOD_CTRL :
+        (k->vkCode == VK_MENU || k->vkCode == VK_LMENU || k->vkCode == VK_RMENU) ? HOTKEY_MOD_ALT :
+        (k->vkCode == VK_SHIFT || k->vkCode == VK_LSHIFT || k->vkCode == VK_RSHIFT) ? HOTKEY_MOD_SHIFT :
+        (k->vkCode == VK_LWIN || k->vkCode == VK_RWIN) ? HOTKEY_MOD_WIN : 0;
+    if (modifierKey && ((down && inlineRecordingAction) || (recordedModifierKeys & modifierKey))) {
+        if (down) recordedModifierKeys |= modifierKey;
+        if (up) recordedModifierKeys &= ~modifierKey;
+        if (modifierKey == HOTKEY_MOD_CTRL) self->ctrlDown = down;
+        if (modifierKey == HOTKEY_MOD_ALT) self->altDown = down;
+        if (modifierKey == HOTKEY_MOD_SHIFT) self->shiftDown = down;
+        if (modifierKey == HOTKEY_MOD_WIN) {
+            self->winDown = down;
+            if (up) self->winUsed = false;
+        }
         return 1;
     }
 
@@ -1928,21 +1521,16 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
 
     DWORD modifiers = getCurrentModifiers(self);
 
-    if (hotkeyRecordingAction != HOTKEY_ACTION_NONE) {
-        if ((w == WM_MBUTTONDOWN && hotkeyRecordingAction != HOTKEY_ACTION_ADJUST) ||
-            (w == WM_MOUSEWHEEL && hotkeyRecordingAction == HOTKEY_ACTION_ADJUST)) {
-            if (trayPopupWindow && hotkeyDialogWindow == trayPopupWindow) {
-                if (modifiers & HOTKEY_MOD_WIN)
-                    self->winUsed = true;
-                PostMessage(trayPopupWindow, WM_TRAY_RECORD, modifiers, hotkeyRecordingAction);
-            } else {
-                finishHotkeyRecording(modifiers);
-            }
+    if (inlineRecordingAction) {
+        if ((w == WM_MBUTTONDOWN && inlineRecordingAction != HOTKEY_ACTION_ADJUST) ||
+            (w == WM_MOUSEWHEEL && inlineRecordingAction == HOTKEY_ACTION_ADJUST)) {
+            if (modifiers & HOTKEY_MOD_WIN) self->winUsed = true;
+            PostMessage(self->trayWindow, WM_TRAY_RECORD, modifiers, inlineRecordingAction);
             return 1;
         }
-
         return CallNextHookEx(null, code, w, l);
     }
+    if (inlineDragging) return CallNextHookEx(null, code, w, l);
 
     if (modifiers == 0)
         return CallNextHookEx(null, code, w, l);
@@ -1951,20 +1539,19 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
     HWND target = GetAncestor(WindowFromPoint(m->pt), GA_ROOT);
     if (!target)
         return CallNextHookEx(null, code, w, l);
-    if (target == trayPopupWindow)
-        return CallNextHookEx(null, code, w, l);
+
 
     if (w == WM_MBUTTONDOWN) {
-        if (modifiersMatch(modifiers, self->settings.applyModifiers) && self->transparency.apply(&self->transparency, target,
+        if (modifiersMatch(modifiers, self->settings.applyModifiers) && applyTrackedAlpha(self, target,
                 getCurrentAlpha(self))) {
-            self->transparency.refresh(&self->transparency, target);
+            if (!isPopupMenuWindow(target)) self->transparency.refresh(&self->transparency, target);
             if (self->settings.applyModifiers & HOTKEY_MOD_WIN)
                 self->winUsed = true;
             return 1;
         }
 
-        if (modifiersMatch(modifiers, self->settings.restoreModifiers) && self->transparency.apply(&self->transparency, target, ALPHA_OPAQUE)) {
-            self->transparency.refresh(&self->transparency, target);
+        if (modifiersMatch(modifiers, self->settings.restoreModifiers) && applyTrackedAlpha(self, target, ALPHA_OPAQUE)) {
+            if (!isPopupMenuWindow(target)) self->transparency.refresh(&self->transparency, target);
             if (self->settings.restoreModifiers & HOTKEY_MOD_WIN) {
                 self->winUsed = true;
                 self->winDown = false;
@@ -1980,7 +1567,7 @@ static LRESULT CALLBACK mouseHook(int code, WPARAM w, LPARAM l) {
 
         alpha = (delta > 0) ? min(255, alpha + 15) : max(60, alpha - 15);
 
-        if (self->transparency.apply(&self->transparency, target, alpha))
+        if (applyTrackedAlpha(self, target, alpha) && !isPopupMenuWindow(target))
             self->transparency.refresh(&self->transparency, target);
 
         if (self->settings.adjustModifiers & HOTKEY_MOD_WIN)
@@ -2017,20 +1604,20 @@ static void run(App* self) {
 
     MSG msg;
     while (GetMessage(&msg, null, 0, 0)) {
-        if (trayPopupWindow && IsDialogMessage(trayPopupWindow, &msg))
-            continue;
+
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
 
-    if (trayPopupWindow)
-        DestroyWindow(trayPopupWindow);
+
     KillTimer(self->trayWindow, TRAY_RETRY_TIMER_ID);
     removeTrayIcon(self);
 
     if (self->winEventHook) UnhookWinEvent(self->winEventHook);
     if (self->keyHook) UnhookWindowsHookEx(self->keyHook);
     if (self->mouseHook) UnhookWindowsHookEx(self->mouseHook);
+
+    self->tracker.restoreAll(&self->tracker, &self->transparency);
 
     appContext = null;
 }

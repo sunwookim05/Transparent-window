@@ -30,12 +30,13 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - `Glass`: 150
   - `Ghost`: 80
   - `Custom Alpha`: user-defined value from 60 to 255.
-- Custom Alpha popup panel with:
+- Custom Alpha submenu with:
   - dark UI
   - vertical draggable slider
-  - live numeric value
-  - live preview on the selected window while adjusting.
-- Clickable shortcut combinations in the Hotkeys panel, with automatic saving and visible recording state.
+  - live opacity percentage and immediate saving
+  - live updates to enabled Explorer and popup transparency targets.
+- Clickable shortcut combinations inside the Hotkeys submenu, with automatic saving and visible recording state.
+- Restore tracked windows' original opacity and layered styles on normal application exit.
 - Dark uninstall confirmation dialog from the tray settings menu.
 - Single-exe first-run setup:
   - copies itself to `%LOCALAPPDATA%\SystemTransparency\SystemTransparency.exe`
@@ -62,17 +63,17 @@ The app then runs from the system tray and automatically starts on future logins
 
 Right-click the tray icon to open the menu.
 
-- Open `Setting > Preset > Custom Alpha...` for the vertical slider. Drag upward for more opacity or downward for more transparency. Preview changes live, then choose OK to save or Cancel to restore the preview.
-- Open `Setting > Hotkeys...` and click the current key combination itself to start recording, then hold modifier keys and middle-click (Apply/Restore) or scroll (Adjust). The shortcut is saved immediately; duplicate Apply/Restore combinations are rejected. Click the combination again or press Escape to cancel recording.
-- In the Hotkeys panel, press Tab to move between controls. Click outside to dismiss when recording is inactive; Escape cancels recording first, then closes the panel.
+- Open `Setting > Preset > Custom Alpha` to adjust the vertical slider directly inside the submenu. Drag upward for more opacity or downward for more transparency. Changes save immediately; Up/Down adjust by one alpha step and Home/End select the endpoints.
+- Open `Setting > Hotkeys` and click a shortcut combination directly inside the submenu to record, then hold modifier keys and middle-click (Apply/Restore) or scroll (Adjust). Recordings save immediately. Duplicate Apply/Restore combinations are rejected. Click the combination again or press Escape to cancel recording.
+- Slider adjustment and shortcut recording keep the tray menu open. Normal menu navigation and outside-click dismissal remain available.
 
 - `Setting > Explorer Auto Transparency`: enable or disable automatic transparency for supported Explorer windows.
 - `Setting > Popup Menu Transparency`: enable or disable best-effort transparency for popup/context menus.
 - `Setting > Run at Startup`: enable or disable the startup scheduled task.
-- `Setting > Hotkeys...`: open a compact popup panel to record the modifier keys used for the manual transparency shortcuts.
+- `Setting > Hotkeys`: record shortcut modifier keys inside the submenu.
 - `Setting > Language`: choose System default, English, or Korean.
 - `Setting > Preset`: choose the transparency level used by automatic mode and the apply-preset shortcut.
-- `Setting > Preset > Custom Alpha...`: open a compact vertical slider popup to choose a custom opacity value from 60 to 255.
+- `Setting > Preset > Custom Alpha`: choose an opacity from 60 to 255 inside the submenu (displayed as 24–100%).
 - `Setting > Uninstall`: remove the installed executable, startup task, app registry settings, and bundled certificate registration.
 - `Check for Updates`: manually check the latest GitHub Release.
 - `Open Log`: open the updater log file.

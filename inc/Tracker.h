@@ -4,11 +4,15 @@
 #ifndef __TRACKER_H
 #define __TRACKER_H
 
-#define MAX_TRACKED_WINDOWS 64
+#define MAX_TRACKED_WINDOWS 256
 
 typedef struct {
     HWND hwnd;
     BYTE originalAlpha;
+    LONG originalExStyle;
+    COLORREF originalColorKey;
+    DWORD originalFlags;
+    DWORD processId;
 } WindowAlpha;
 
 typedef struct TRACKER {
@@ -18,6 +22,7 @@ typedef struct TRACKER {
     boolean (*isTracked)(struct TRACKER*, HWND);
     void (*track)(struct TRACKER*, Transparency*, HWND);
     void (*remove)(struct TRACKER*, HWND);
+    void (*restoreAll)(struct TRACKER*, Transparency*);
 } Tracker;
 
 Tracker new_Tracker(void);
