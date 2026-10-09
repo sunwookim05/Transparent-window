@@ -351,41 +351,41 @@ static void applyAlphaPreview(HWND dialog) {
     }
 }
 
-static BYTE sliderPointToAlpha(HWND slider, int x) {
+static BYTE sliderPointToAlpha(HWND slider, int y) {
     RECT rect;
-    int width;
+    int height;
     int value;
-    int left;
-    int right;
+    int top;
+    int bottom;
 
     GetClientRect(slider, &rect);
-    left = rect.left + 12;
-    right = rect.right - 12;
-    width = right - left;
+    top = rect.top + 12;
+    bottom = rect.bottom - 12;
+    height = bottom - top;
 
-    if (width <= 1)
+    if (height <= 1)
         return alphaDialogValue;
 
-    if (x <= left) return 60;
-    if (x >= right) return 255;
+    if (y <= top) return 255;
+    if (y >= bottom) return 60;
 
-    value = 60 + ((255 - 60) * (x - left) + width / 2) / width;
+    value = 255 - ((255 - 60) * (y - top) + height / 2) / height;
     if (value < 60) value = 60;
     if (value > 255) value = 255;
 
     return (BYTE)value;
 }
 
-static int alphaToSliderX(HWND slider, BYTE alpha) {
+static int alphaToSliderY(HWND slider, BYTE alpha) {
     RECT rect;
-    int left;
-    int right;
+    int top;
+    int bottom;
 
     GetClientRect(slider, &rect);
-    left = rect.left + 12;
-    right = rect.right - 12;
+    top = rect.top + 12;
+    bottom = rect.bottom - 12;
 
-    return left + ((int)(alpha - 60) * (right - left)) / (255 - 60);
+    return bottom - ((int)(alpha - 60) * (bottom - top)) / (255 - 60);
 }
 
 static void updateAlphaControls(HWND dialog, BYTE alpha) {
@@ -421,14 +421,14 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
     HPEN pen;
     HGDIOBJ oldBrush;
     HGDIOBJ oldPen;
-    int x;
+    int y;
 
     (void)id;
     (void)ref;
 
     if (msg == WM_LBUTTONDOWN || (msg == WM_MOUSEMOVE && (w & MK_LBUTTON))) {
         SetCapture(hwnd);
-        updateAlphaControls(dialog, sliderPointToAlpha(hwnd, (short)LOWORD(l)));
+        updateAlphaControls(dialog, sliderPointToAlpha(hwnd, (short)HIWORD(l)));
         return 0;
     }
 
@@ -436,7 +436,7 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
         if (GetCapture() == hwnd)
             ReleaseCapture();
 
-        updateAlphaControls(dialog, sliderPointToAlpha(hwnd, (short)LOWORD(l)));
+        updateAlphaControls(dialog, sliderPointToAlpha(hwnd, (short)HIWORD(l)));
         return 0;
     }
 
@@ -452,10 +452,10 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
         FillRect(dc, &rect, brush);
         DeleteObject(brush);
 
-        track.left = rect.left + 12;
-        track.right = rect.right - 12;
-        track.top = rect.top + ((rect.bottom - rect.top) / 2) - 3;
-        track.bottom = track.top + 6;
+        track.left = rect.left + ((rect.right - rect.left) / 2) - 3;
+        track.right = track.left + 6;
+        track.top = rect.top + 12;
+        track.bottom = rect.bottom - 12;
 
         brush = CreateSolidBrush(UI_BORDER);
         pen = CreatePen(PS_SOLID, 1, UI_BORDER);
@@ -467,9 +467,9 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
         DeleteObject(pen);
         DeleteObject(brush);
 
-        x = alphaToSliderX(hwnd, alphaDialogValue);
+        y = alphaToSliderY(hwnd, alphaDialogValue);
         active = track;
-        active.right = x;
+        active.top = y;
 
         brush = CreateSolidBrush(UI_ACCENT);
         pen = CreatePen(PS_SOLID, 1, UI_ACCENT);
@@ -482,7 +482,7 @@ static LRESULT CALLBACK alphaSliderProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
         DeleteObject(brush);
 
         brush = CreateSolidBrush(UI_TEXT);
-        Ellipse(dc, x - 7, track.top - 5, x + 7, track.bottom + 5);
+        Ellipse(dc, track.left - 5, y - 7, track.right + 5, y + 7);
         DeleteObject(brush);
 
         EndPaint(hwnd, &ps);
@@ -786,6 +786,12 @@ static void updateHotkeyDialogLabels(void) {
     SetWindowTextW(GetDlgItem(hotkeyDialogWindow, ID_HOTKEY_ADJUST_LABEL), text);
 }
 
+static void invalidateHotkeyButtons(HWND hwnd) {
+    InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_APPLY_RECORD), null, true);
+    InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_RESTORE_RECORD), null, true);
+    InvalidateRect(GetDlgItem(hwnd, ID_HOTKEY_ADJUST_RECORD), null, true);
+}
+
 static void setHotkeyRecording(HWND hwnd, int action) {
     const WCHAR* text;
 
@@ -803,6 +809,7 @@ static void setHotkeyRecording(HWND hwnd, int action) {
         action == HOTKEY_ACTION_APPLY ? ID_HOTKEY_APPLY_LABEL :
         action == HOTKEY_ACTION_RESTORE ? ID_HOTKEY_RESTORE_LABEL :
         ID_HOTKEY_ADJUST_LABEL), text);
+    invalidateHotkeyButtons(hwnd);
 }
 
 static void finishHotkeyRecording(DWORD modifiers) {
@@ -826,6 +833,7 @@ static void finishHotkeyRecording(DWORD modifiers) {
 
     hotkeyRecordingAction = HOTKEY_ACTION_NONE;
     updateHotkeyDialogLabels();
+    invalidateHotkeyButtons(hotkeyDialogWindow);
 }
 
 static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
@@ -856,6 +864,13 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
             hotkeyDialogWindow = hwnd;
             updateHotkeyDialogLabels();
             polishDialog(hwnd);
+            if (appContext && appContext->settings.popupTransparency) {
+                BYTE alpha = appContext->settings.preset == PRESET_CUSTOM ?
+                    appContext->settings.customAlpha :
+                    appContext->transparency.presetToAlpha(&appContext->transparency, appContext->settings.preset);
+                appContext->transparency.apply(&appContext->transparency, hwnd, alpha);
+                appContext->transparency.refresh(&appContext->transparency, hwnd);
+            }
             return 0;
 
         case WM_ERASEBKGND: {
@@ -877,9 +892,21 @@ static LRESULT CALLBACK hotkeyWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l
             if (w == ID_HOTKEY_APPLY_RECORD || w == ID_HOTKEY_RESTORE_RECORD || w == ID_HOTKEY_ADJUST_RECORD ||
                 w == ID_HOTKEY_OK || w == ID_HOTKEY_CANCEL) {
                 const WCHAR* label = tr(STR_RECORD);
-                if (w == ID_HOTKEY_OK) label = tr(STR_OK);
-                else if (w == ID_HOTKEY_CANCEL) label = tr(STR_CANCEL);
-                drawDarkButton((DRAWITEMSTRUCT*)l, label, w == ID_HOTKEY_OK);
+                boolean active = false;
+
+                if (w == ID_HOTKEY_OK) {
+                    label = tr(STR_OK);
+                    active = true;
+                } else if (w == ID_HOTKEY_CANCEL) {
+                    label = tr(STR_CANCEL);
+                } else if ((w == ID_HOTKEY_APPLY_RECORD && hotkeyRecordingAction == HOTKEY_ACTION_APPLY) ||
+                    (w == ID_HOTKEY_RESTORE_RECORD && hotkeyRecordingAction == HOTKEY_ACTION_RESTORE) ||
+                    (w == ID_HOTKEY_ADJUST_RECORD && hotkeyRecordingAction == HOTKEY_ACTION_ADJUST)) {
+                    label = L"...";
+                    active = true;
+                }
+
+                drawDarkButton((DRAWITEMSTRUCT*)l, label, active);
                 return true;
             }
             break;
@@ -1197,24 +1224,24 @@ static LRESULT CALLBACK alphaWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
         case WM_CREATE:
             ensureUiResources();
 
-            CreateWindowW(L"STATIC", tr(STR_CUSTOM_ALPHA), WS_VISIBLE | WS_CHILD, 18, 14, 150, 20, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", tr(STR_CUSTOM_ALPHA), WS_VISIBLE | WS_CHILD, 18, 14, 170, 20, hwnd, null, null, null);
 
             slider = CreateWindowExA(0, "STATIC", "", WS_VISIBLE | WS_CHILD | SS_NOTIFY,
-                20, 48, 300, 34, hwnd, (HMENU)ID_ALPHA_SLIDER, null, null);
+                26, 42, 54, 166, hwnd, (HMENU)ID_ALPHA_SLIDER, null, null);
             SetWindowSubclass(slider, alphaSliderProc, 1, 0);
 
-            CreateWindowW(L"STATIC", L"60", WS_VISIBLE | WS_CHILD, 22, 82, 32, 18, hwnd, null, null, null);
-            CreateWindowW(L"STATIC", L"255", WS_VISIBLE | WS_CHILD | SS_RIGHT, 286, 82, 32, 18, hwnd, null, null, null);
-            CreateWindowW(L"STATIC", tr(STR_ALPHA_VALUE), WS_VISIBLE | WS_CHILD, 94, 112, 42, 20, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", L"255", WS_VISIBLE | WS_CHILD, 92, 48, 36, 18, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", L"60", WS_VISIBLE | WS_CHILD, 92, 184, 36, 18, hwnd, null, null, null);
+            CreateWindowW(L"STATIC", tr(STR_ALPHA_VALUE), WS_VISIBLE | WS_CHILD, 104, 98, 42, 20, hwnd, null, null, null);
             edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_VISIBLE | WS_CHILD | ES_NUMBER,
-                144, 108, 70, 24, hwnd, (HMENU)ID_ALPHA_EDIT, null, null);
+                150, 94, 70, 24, hwnd, (HMENU)ID_ALPHA_EDIT, null, null);
             snprintf(text, sizeof(text), "%u", alphaDialogValue);
             SetWindowTextA(edit, text);
 
             CreateWindowW(L"BUTTON", tr(STR_OK), WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
-                82, 150, 82, 28, hwnd, (HMENU)ID_ALPHA_OK, null, null);
+                38, 224, 82, 28, hwnd, (HMENU)ID_ALPHA_OK, null, null);
             CreateWindowW(L"BUTTON", tr(STR_CANCEL), WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
-                178, 150, 82, 28, hwnd, (HMENU)ID_ALPHA_CANCEL, null, null);
+                136, 224, 82, 28, hwnd, (HMENU)ID_ALPHA_CANCEL, null, null);
 
             applyAlphaPreview(hwnd);
             polishDialog(hwnd);
@@ -1348,7 +1375,7 @@ static boolean askAlpha(HWND owner, BYTE* alpha) {
     RegisterClassA(&wc);
 
     window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_DLGMODALFRAME, wc.lpszClassName, "",
-        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 350, 205,
+        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, 260, 285,
         owner, null, wc.hInstance, null);
 
     if (!window)
@@ -1657,6 +1684,9 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
         PostMessage(hwnd, WM_NULL, 0, 0);
         GetCursorPos(&statusPoint);
 
+        DestroyMenu(root);
+        DeleteObject(menuBrush);
+
         switch (cmd) {
             case 1:
                 ShellExecuteA(null, "open", "https://github.com/sunwookim05", null, null, SW_SHOWNORMAL);
@@ -1754,9 +1784,6 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 break;
 
         }
-
-        DestroyMenu(root);
-        DeleteObject(menuBrush);
         return 0;
     }
 

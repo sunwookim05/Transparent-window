@@ -32,10 +32,10 @@ It is written in C with the Win32 API. The app is distributed as a single execut
   - `Custom Alpha`: user-defined value from 60 to 255.
 - Custom Alpha popup panel with:
   - dark UI
-  - draggable slider
+  - vertical draggable slider
   - live numeric value
   - live preview on the selected window while adjusting.
-- Hotkey popup panel for recording shortcut modifiers.
+- Hotkey popup panel with transparent styling and visible recording state.
 - Dark uninstall confirmation dialog from the tray settings menu.
 - Single-exe first-run setup:
   - copies itself to `%LOCALAPPDATA%\SystemTransparency\SystemTransparency.exe`
@@ -68,7 +68,7 @@ Right-click the tray icon to open the menu.
 - `Setting > Hotkeys...`: open a compact popup panel to record the modifier keys used for the manual transparency shortcuts.
 - `Setting > Language`: choose System default, English, or Korean.
 - `Setting > Preset`: choose the transparency level used by automatic mode and the apply-preset shortcut.
-- `Setting > Preset > Custom Alpha...`: open a compact slider popup to choose a custom opacity value from 60 to 255.
+- `Setting > Preset > Custom Alpha...`: open a compact vertical slider popup to choose a custom opacity value from 60 to 255.
 - `Setting > Uninstall`: remove the installed executable, startup task, app registry settings, and bundled certificate registration.
 - `Check for Updates`: manually check the latest GitHub Release.
 - `Open Log`: open the updater log file.
@@ -93,6 +93,7 @@ gcc src\main.c src\App.c src\Installer.c src\Updater.c src\Settings.c src\Transp
 - Some protected, game, GPU-accelerated, or security-sensitive windows may reject transparency changes.
 - The app is optimized for Windows Explorer and common shell windows.
 - Popup menu transparency is best effort on Windows 11. Classic Win32 menu windows are handled conservatively so context menus keep opening reliably.
+- Tray menus are closed before opening popup panels so sliders and recording controls keep mouse and keyboard input reliably.
 - Administrator rights are required for first-run setup, certificate registration, and highest-privilege startup registration.
 
 ## License
