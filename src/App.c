@@ -11,19 +11,12 @@
 #include "Updater.h"
 
 #define WM_TRAY (WM_USER + 1)
-#define WM_TRAY_MORE (WM_USER + 2)
 #define WM_TRAY_RECORD (WM_USER + 3)
-#define ID_TRAY_MORE 1301
 #define ID_TRAY_HINT 1302
 #define ID_TRAY_ALPHA_TITLE 1303
 #define ID_TRAY_HOTKEY_TITLE 1304
 #define ID_TRAY_ROW_TITLE 1310
-#define ID_TRAY_ALPHA_MENU 1320
-#define ID_TRAY_KEYS_MENU 1321
 #define ID_TRAY_BACK 1322
-#define TRAY_PAGE_HOME 0
-#define TRAY_PAGE_ALPHA 1
-#define TRAY_PAGE_KEYS 2
 #define TRAY_ID 1
 #define TRAY_RETRY_TIMER_ID 100
 #define TRAY_STATUS_TIMER_ID 101
@@ -106,9 +99,9 @@ static int hotkeyRecordingAction = HOTKEY_ACTION_NONE;
 
 static HWND trayPopupWindow = null;
 static HFONT trayHeadingFont = null;
-static HFONT trayValueFont = null;
+
 static HBRUSH trayPanelBrush = null;
-static int trayPopupPage = TRAY_PAGE_HOME;
+
 
 typedef struct {
     WCHAR text[160];
@@ -1415,12 +1408,6 @@ static void CALLBACK winEventCallback(HWINEVENTHOOK hook, DWORD event, HWND hwnd
         self->tracker.remove(&self->tracker, hwnd);
 }
 
-static void updateTrayAlpha(HWND hwnd) {
-    WCHAR text[96];
-    swprintf(text, 96, L"%u%%", (unsigned)((getCurrentAlpha(appContext) * 100 + 127) / 255));
-    SetWindowTextW(GetDlgItem(hwnd, ID_ALPHA_EDIT), text);
-}
-
 static void paintTrayCard(HDC dc, RECT rect, COLORREF fill, COLORREF border) {
     HBRUSH brush = CreateSolidBrush(fill);
     HPEN pen = CreatePen(PS_SOLID, 1, border);
@@ -1433,7 +1420,7 @@ static void paintTrayCard(HDC dc, RECT rect, COLORREF fill, COLORREF border) {
     DeleteObject(brush);
 }
 
-static void showTrayPopupPage(App* self, int page, const POINT* position);
+static void showHotkeyPopup(App* self);
 
 static LRESULT CALLBACK shortcutButtonProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref) {
     (void)ref;
@@ -1453,42 +1440,18 @@ static LRESULT CALLBACK trayPopupProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
 
     switch (msg) {
         case WM_CREATE: {
-            HWND slider;
+
             const int labels[] = {ID_HOTKEY_APPLY_LABEL, ID_HOTKEY_RESTORE_LABEL, ID_HOTKEY_ADJUST_LABEL};
             const StringId titles[] = {STR_HOTKEY_APPLY, STR_HOTKEY_RESTORE, STR_HOTKEY_ADJUST};
-            trayPopupPage = (int)(INT_PTR)((CREATESTRUCT*)l)->lpCreateParams;
+
             ensureUiResources();
             if (!trayPanelBrush)
                 trayPanelBrush = CreateSolidBrush(UI_PANEL);
             if (!trayHeadingFont)
                 trayHeadingFont = CreateFontW(-17, 0, 0, 0, FW_SEMIBOLD, false, false, false, DEFAULT_CHARSET,
                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            if (!trayValueFont)
-                trayValueFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, false, false, false, DEFAULT_CHARSET,
-                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-            CreateWindowW(L"STATIC", trayPopupPage == TRAY_PAGE_ALPHA ?
-                (effectiveLanguage(self) == LANGUAGE_KOREAN ? L"불투명도" : L"Opacity") :
-                trayPopupPage == TRAY_PAGE_KEYS ?
-                (effectiveLanguage(self) == LANGUAGE_KOREAN ? L"단축키" : L"Shortcuts") : tr(STR_APP_NAME), WS_CHILD | WS_VISIBLE,
-                22, 18, 480, 26, hwnd, (HMENU)ID_TRAY_ALPHA_TITLE, null, null);
-            if (trayPopupPage == TRAY_PAGE_ALPHA) {
-            CreateWindowW(L"STATIC", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"불투명도" : L"Opacity",
-                WS_CHILD | WS_VISIBLE | SS_CENTER, 40, 76, 140, 20, hwnd, null, null, null);
-            CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_CENTER,
-                40, 100, 140, 36, hwnd, (HMENU)ID_ALPHA_EDIT, null, null);
-            CreateWindowW(L"STATIC", L"100%", WS_CHILD | WS_VISIBLE | SS_CENTER,
-                40, 145, 140, 18, hwnd, null, null, null);
-            slider = CreateWindowW(TRACKBAR_CLASSW, L"Opacity", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_VERT | TBS_NOTICKS,
-                98, 166, 32, 140, hwnd, (HMENU)ID_ALPHA_SLIDER, null, null);
-            SendMessage(slider, TBM_SETRANGE, true, MAKELPARAM(60, 255));
-            SendMessage(slider, TBM_SETPAGESIZE, 0, 15);
-            /* Native vertical trackbars increase downward; invert the position for opacity. */
-            SendMessage(slider, TBM_SETPOS, true, 315 - getCurrentAlpha(self));
-            CreateWindowW(L"STATIC", L"24%", WS_CHILD | WS_VISIBLE | SS_CENTER,
-                40, 308, 140, 18, hwnd, null, null, null);
-            updateTrayAlpha(hwnd);
-            }
-            if (trayPopupPage == TRAY_PAGE_KEYS) {
+            CreateWindowW(L"STATIC", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"단축키" : L"Shortcuts", WS_CHILD | WS_VISIBLE,
+                22, 18, 390, 26, hwnd, (HMENU)ID_TRAY_ALPHA_TITLE, null, null);
             hotkeyDialogWindow = hwnd;
             hotkeyDialogApplyModifiers = self->settings.applyModifiers;
             hotkeyDialogRestoreModifiers = self->settings.restoreModifiers;
@@ -1505,80 +1468,14 @@ static LRESULT CALLBACK trayPopupProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             updateHotkeyDialogLabels();
             CreateWindowW(L"STATIC", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"키 조합을 클릭해 변경하세요" : L"Click a shortcut to change it",
                 WS_CHILD | WS_VISIBLE, 22, 48, 390, 20, hwnd, (HMENU)ID_TRAY_HOTKEY_TITLE, null, null);
-            }
-            if (trayPopupPage == TRAY_PAGE_HOME) {
-                CreateWindowW(L"BUTTON", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"불투명도  >" : L"Opacity  >",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                    22, 64, 388, 48, hwnd, (HMENU)ID_TRAY_ALPHA_MENU, null, null);
-                CreateWindowW(L"BUTTON", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"단축키  >" : L"Shortcuts  >",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                    22, 122, 388, 48, hwnd, (HMENU)ID_TRAY_KEYS_MENU, null, null);
-            }
-            if (trayPopupPage != TRAY_PAGE_HOME) {
             CreateWindowW(L"STATIC", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"변경 시 자동 저장" : L"Saved automatically",
-                WS_CHILD | WS_VISIBLE, 22, 348, trayPopupPage == TRAY_PAGE_ALPHA ? 180 : 390, 20, hwnd, (HMENU)ID_TRAY_HINT, null, null);
-            CreateWindowW(L"BUTTON", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"<  뒤로" : L"<  Back",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                22, 378, trayPopupPage == TRAY_PAGE_ALPHA ? 176 : 388, 32, hwnd, (HMENU)ID_TRAY_BACK, null, null);
-            } else {
-            CreateWindowW(L"BUTTON", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"더 보기" : L"More",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                22, 192, 268, 32, hwnd, (HMENU)ID_TRAY_MORE, null, null);
-            CreateWindowW(L"BUTTON", tr(STR_EXIT), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                302, 192, 108, 32, hwnd, (HMENU)3, null, null);
-            }
+                WS_CHILD | WS_VISIBLE, 22, 348, 390, 20, hwnd, (HMENU)ID_TRAY_HINT, null, null);
+            CreateWindowW(L"BUTTON", effectiveLanguage(self) == LANGUAGE_KOREAN ? L"닫기" : L"Close",
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 22, 378, 388, 32, hwnd, (HMENU)ID_TRAY_BACK, null, null);
             polishDialog(hwnd);
             SendMessage(GetDlgItem(hwnd, ID_TRAY_ALPHA_TITLE), WM_SETFONT, (WPARAM)trayHeadingFont, true);
-            SendMessage(GetDlgItem(hwnd, ID_ALPHA_EDIT), WM_SETFONT, (WPARAM)trayValueFont, true);
+
             return 0;
-        }
-        case WM_VSCROLL:
-            if ((HWND)l == GetDlgItem(hwnd, ID_ALPHA_SLIDER)) {
-                BYTE alpha = (BYTE)(315 - SendMessage((HWND)l, TBM_GETPOS, 0, 0));
-                if (self->settings.preset != PRESET_CUSTOM || self->settings.customAlpha != alpha) {
-                    self->settings.customAlpha = alpha;
-                    self->settings.preset = PRESET_CUSTOM;
-                    self->settings.save(&self->settings);
-                    self->applyExplorerAutoAll(self);
-                    updateTrayAlpha(hwnd);
-                }
-            }
-            return 0;
-        case WM_NOTIFY: {
-            NMHDR* header = (NMHDR*)l;
-            if (header->idFrom == ID_ALPHA_SLIDER && header->code == NM_CUSTOMDRAW) {
-                NMCUSTOMDRAW* draw = (NMCUSTOMDRAW*)l;
-                if (draw->dwDrawStage == CDDS_PREPAINT) {
-                    RECT rect;
-                    GetClientRect(header->hwndFrom, &rect);
-                    FillRect(draw->hdc, &rect, trayPanelBrush);
-                    return CDRF_NOTIFYITEMDRAW;
-                }
-                if (draw->dwDrawStage == CDDS_ITEMPREPAINT) {
-                    RECT rect = draw->rc;
-                    if (draw->dwItemSpec == TBCD_CHANNEL) {
-                        RECT thumb;
-                        int center = (rect.left + rect.right) / 2;
-                        rect.left = center - 3;
-                        rect.right = center + 3;
-                        paintTrayCard(draw->hdc, rect, UI_BORDER, UI_BORDER);
-                        SendMessage(header->hwndFrom, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
-                        rect.top = (thumb.top + thumb.bottom) / 2;
-                        paintTrayCard(draw->hdc, rect, UI_ACCENT, UI_ACCENT);
-                        return CDRF_SKIPDEFAULT;
-                    }
-                    if (draw->dwItemSpec == TBCD_THUMB) {
-                        int x = (rect.left + rect.right) / 2;
-                        int y = (rect.top + rect.bottom) / 2;
-                        RECT ring = {x - 11, y - 11, x + 11, y + 11};
-                        RECT knob = {x - 7, y - 7, x + 7, y + 7};
-                        paintTrayCard(draw->hdc, ring, UI_PANEL, GetFocus() == header->hwndFrom ? UI_ACCENT : UI_BORDER);
-                        paintTrayCard(draw->hdc, knob, UI_TEXT, UI_TEXT);
-                        return CDRF_SKIPDEFAULT;
-                    }
-                }
-            }
-            break;
         }
         case WM_TRAY_RECORD: {
             DWORD modifiers = (DWORD)w;
@@ -1605,16 +1502,8 @@ static LRESULT CALLBACK trayPopupProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             int action = id == ID_HOTKEY_APPLY_LABEL ? HOTKEY_ACTION_APPLY :
                 id == ID_HOTKEY_RESTORE_LABEL ? HOTKEY_ACTION_RESTORE :
                 id == ID_HOTKEY_ADJUST_LABEL ? HOTKEY_ACTION_ADJUST : HOTKEY_ACTION_NONE;
-            if (id == ID_TRAY_ALPHA_MENU || id == ID_TRAY_KEYS_MENU || id == ID_TRAY_BACK) {
-                RECT rect;
-                POINT anchor;
-                int page = id == ID_TRAY_ALPHA_MENU ? TRAY_PAGE_ALPHA :
-                    id == ID_TRAY_KEYS_MENU ? TRAY_PAGE_KEYS : TRAY_PAGE_HOME;
-                GetWindowRect(hwnd, &rect);
-                anchor.x = rect.left - 8;
-                anchor.y = rect.top - 8;
+            if (id == ID_TRAY_BACK) {
                 DestroyWindow(hwnd);
-                showTrayPopupPage(self, page, &anchor);
                 return 0;
             }
             if (action != HOTKEY_ACTION_NONE) {
@@ -1638,17 +1527,6 @@ static LRESULT CALLBACK trayPopupProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
                 }
                 return 0;
             }
-            if (id == ID_TRAY_MORE) {
-                DestroyWindow(hwnd);
-                PostMessage(self->trayWindow, WM_TRAY_MORE, 0, 0);
-                return 0;
-            }
-            if (id == 3) {
-                DestroyWindow(hwnd);
-                self->shuttingDown = true;
-                PostQuitMessage(0);
-                return 0;
-            }
             break;
         }
         case WM_ACTIVATE:
@@ -1668,10 +1546,7 @@ static LRESULT CALLBACK trayPopupProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             RECT client;
             GetClientRect(hwnd, &client);
             FillRect(dc, &client, alphaDarkBrush);
-            RECT left = {22, 64, 198, 336};
-            if (trayPopupPage == TRAY_PAGE_ALPHA)
-                paintTrayCard(dc, left, UI_PANEL, UI_BORDER);
-            for (int i = 0; trayPopupPage == TRAY_PAGE_KEYS && i < 3; i++) {
+            for (int i = 0; i < 3; i++) {
                 RECT row = {22, 78 + i * 84, 410, 156 + i * 84};
                 paintTrayCard(dc, row, UI_PANEL, hotkeyRecordingAction == i + 1 ? UI_ACCENT : UI_BORDER);
             }
@@ -1717,7 +1592,7 @@ static LRESULT CALLBACK trayPopupProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
     return DefWindowProcW(hwnd, msg, w, l);
 }
 
-static void showTrayPopupPage(App* self, int page, const POINT* position) {
+static void showHotkeyPopup(App* self) {
     WNDCLASSW wc = {0};
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_BAR_CLASSES};
     POINT anchor;
@@ -1733,24 +1608,15 @@ static void showTrayPopupPage(App* self, int page, const POINT* position) {
     wc.hbrBackground = alphaDarkBrush;
     wc.lpszClassName = L"TransparencyTrayPopup";
     RegisterClassW(&wc);
-    if (position)
-        anchor = *position;
-    else
-        GetCursorPos(&anchor);
+    GetCursorPos(&anchor);
     trayPopupWindow = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, tr(STR_APP_NAME),
-        WS_POPUP | WS_BORDER | WS_CLIPCHILDREN, 0, 0, page == TRAY_PAGE_ALPHA ? 224 : 436,
-        page == TRAY_PAGE_HOME ? 248 : 432, self->trayWindow, null, wc.hInstance, (LPVOID)(INT_PTR)page);
+        WS_POPUP | WS_BORDER | WS_CLIPCHILDREN, 0, 0, 436, 432, self->trayWindow, null, wc.hInstance, null);
     if (trayPopupWindow) {
         positionPopupWindow(trayPopupWindow, anchor);
         ShowWindow(trayPopupWindow, SW_SHOWNORMAL);
         SetForegroundWindow(trayPopupWindow);
-        SetFocus(GetDlgItem(trayPopupWindow, page == TRAY_PAGE_ALPHA ? ID_ALPHA_SLIDER :
-            page == TRAY_PAGE_KEYS ? ID_HOTKEY_APPLY_LABEL : ID_TRAY_ALPHA_MENU));
+        SetFocus(GetDlgItem(trayPopupWindow, ID_HOTKEY_APPLY_LABEL));
     }
-}
-
-static void showTrayPopup(App* self) {
-    showTrayPopupPage(self, TRAY_PAGE_HOME, null);
 }
 
 static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
@@ -1813,11 +1679,6 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
     }
 
     if (msg == WM_TRAY && isTrayContextMenu(l)) {
-        showTrayPopup(self);
-        return 0;
-    }
-
-    if (msg == WM_TRAY_MORE) {
         HMENU root = CreatePopupMenu();
         HMENU setting = CreatePopupMenu();
         HMENU preset  = CreatePopupMenu();
@@ -1918,7 +1779,7 @@ static LRESULT CALLBACK trayWindowProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) 
                 break;
 
             case ID_SETTING_HOTKEYS:
-                showTrayPopupPage(self, TRAY_PAGE_KEYS, null);
+                showHotkeyPopup(self);
                 break;
 
             case ID_LANG_SYSTEM:
